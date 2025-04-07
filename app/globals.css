@@ -1,26 +1,51 @@
-@import "tailwindcss";
+/* app/globals.css */
 
+@font-face {
+  font-family: "Minecraftia"; /* Nom que tu donnes à ta police */
+  src: url("/fonts/Minecraftia.ttf") format("truetype"); /* Chemin depuis public/ */
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap; /* Améliore le chargement */
+}
+
+/* Déclare la police comme variable CSS (optionnel mais pratique) */
 :root {
+  --font-minecraft: "Minecraftia", sans-serif; /* Fallback sur sans-serif */
+  /* Conserve tes autres variables */
   --background: #ffffff;
   --foreground: #171717;
 }
 
+/* ... (le reste de tes styles globaux, @import "tailwindcss", @theme, etc.) ... */
+
+@import "tailwindcss";
+
 @theme inline {
+  /* Assure-toi que tes variables Tailwind sont toujours là */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  /* Tu pourrais aussi mapper directement la police Tailwind ici si tu préfères */
+  /* --font-minecraft: var(--font-minecraft); */
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+/* ... (le reste, media prefers-color-scheme, body, etc.) ... */
 
+/* Applique la police au corps par défaut */
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  /* Applique la nouvelle police par défaut. Tu pourras la surcharger localement si besoin. */
+  font-family: var(--font-minecraft);
+  /* Anti-aliasing peut être désactivé pour un look pixelisé plus net */
+  -moz-osx-font-smoothing: grayscale;
+  /* Empêcher le lissage des polices peut rendre le texte plus net pour les polices pixel */
+
+  image-rendering: pixelated; /* Aide aussi pour le rendu pixelisé général */
+}
+
+/* Style pour les éléments de code, si tu veux qu'ils utilisent une autre police */
+code {
+  font-family: var(--font-mono); /* Ou une autre police mono */
 }
