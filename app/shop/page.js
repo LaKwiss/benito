@@ -3,34 +3,19 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { fetchWithAuth } from "../../utils/apiClient"; // Vérifie ce chemin
+import Image from "next/image";
+import { fetchWithAuth } from "../../utils/apiClient";
 
 const ACCESS_TOKEN_KEY = "accessToken";
 const REFRESH_TOKEN_KEY = "refreshToken";
-
-// --- Composant Icone Placeholder ---
-const ItemPlaceholderIcon = (
-  { size = "w-10 h-10" } // Taille par défaut plus petite pour la liste
-) => (
-  <div
-    className={`${size} bg-black bg-opacity-50 border border-gray-600 flex items-center justify-center text-gray-400 text-[10px] italic shrink-0`}
-  >
-    Icon
-  </div>
-);
-
-// --- Composant Placeholder pour Tête de Vendeur ---
-const SellerHeadPlaceholder = ({ size = "w-5 h-5" }) => (
-  <div
-    className={`${size} bg-blue-800 border border-blue-900 inline-block align-middle mr-1`}
-    title="Seller Icon Placeholder"
-  ></div>
-);
+const VERCEL_API_URL = "https://minecraft-api.vercel.app/api/items"; // URL de l'API externe
 
 export default function ShopPage() {
-  // États (inchangés)
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // --- États ---
+  const [items, setItems] = useState([]); // Items de notre shop API
+  const [itemMetadataMap, setItemMetadataMap] = useState(null); // Map des métadonnées Vercel (key: namespacedId)
+  const [loadingShop, setLoadingShop] = useState(true); // Chargement de notre API
+  const [loadingMeta, setLoadingMeta] = useState(true); // Chargement de l'API Vercel
   const [error, setError] = useState("");
   const router = useRouter();
   const [purchaseStatus, setPurchaseStatus] = useState({
@@ -38,75 +23,188 @@ export default function ShopPage() {
     type: "",
     listingId: null,
   });
-  // purchasingId n'est plus utilisé car on retire le bouton Acheter par ligne pour l'instant
-  // const [purchasingId, setPurchasingId] = useState(null);
+  const [purchasingId, setPurchasingId] = useState(null);
+  const [filterMode, setFilterMode] = useState("all");
 
-  // Fonctions fetchItems (inchangée pour la logique)
-  const fetchItems = async () => {
-    setLoading(true);
+  // --- Fonctions API ---
+
+  // Récupère les items en vente depuis notre API
+  const fetchShopItems = async () => {
+    setLoadingShop(true);
     setError("");
     setPurchaseStatus({ message: "", type: "", listingId: null });
     if (!localStorage.getItem(ACCESS_TOKEN_KEY)) {
       setError("Non connecté. Redirection...");
-      setLoading(false);
+      setLoadingShop(false);
+      setLoadingMeta(false);
+      localStorage.removeItem(ACCESS_TOKEN_KEY);
+      localStorage.removeItem(REFRESH_TOKEN_KEY);
+      setTimeout(() => router.push("/login"), 2000);
+      return false;
+    } // Indique échec
+    try {
+      const data = await fetchWithAuth("/api/shop/items", { method: "GET" });
+      setItems(Array.isArray(data) ? data : data.items || data.listings || []);
+      return true; // Indique succès
+    } catch (err) {
+      console.error("Erreur fetchShopItems:", err);
+      if (err.message === "Session expirée") {
+        setError("Session expirée. Redirection...");
+        setTimeout(() => router.push("/login"), 3000);
+      } else {
+        setError(err.message || "Impossible de charger les items du shop.");
+      }
+      return false; // Indique échec
+    } finally {
+      setLoadingShop(false);
+    }
+  };
+
+  // Récupère les métadonnées (images, etc.) depuis l'API Vercel
+  const fetchMetadata = async () => {
+    setLoadingMeta(true);
+    try {
+      console.log("Fetching metadata from Vercel API...");
+      const response = await fetch(VERCEL_API_URL);
+      if (!response.ok) {
+        throw new Error(
+          `Erreur ${response.status} lors de la récupération des métadonnées.`
+        );
+      }
+      const metaDataArray = await response.json();
+      console.log(`Metadata received: ${metaDataArray.length} items`);
+
+      // Convertit le tableau en Map pour accès rapide par namespacedId
+      const map = new Map();
+      metaDataArray.forEach((metaItem) => {
+        if (metaItem.namespacedId) {
+          map.set(metaItem.namespacedId, metaItem);
+        }
+      });
+      setItemMetadataMap(map);
+      console.log("Metadata Map created.");
+      return true; // Succès
+    } catch (err) {
+      console.error("Erreur fetchMetadata:", err);
+      // On peut choisir de continuer sans les images ou afficher une erreur bloquante
+      setError((prev) =>
+        prev
+          ? `${prev}\nErreur métadonnées: ${err.message}`
+          : `Erreur métadonnées: ${err.message}`
+      );
+      setItemMetadataMap(new Map()); // Initialise une map vide pour éviter les erreurs plus loin
+      return false; // Échec
+    } finally {
+      setLoadingMeta(false);
+    }
+  };
+
+  // Logique d'achat (inchangée)
+  const handlePurchase = async (listingId) => {
+    /* ... */ console.log(`Tentative achat: ${listingId}`);
+    setPurchasingId(listingId);
+    setPurchaseStatus({ message: "", type: "", listingId: null });
+    if (!localStorage.getItem(ACCESS_TOKEN_KEY)) {
+      setError("Non connecté. Redirection...");
+      setPurchasingId(null);
       localStorage.removeItem(ACCESS_TOKEN_KEY);
       localStorage.removeItem(REFRESH_TOKEN_KEY);
       setTimeout(() => router.push("/login"), 2000);
       return;
     }
     try {
-      const data = await fetchWithAuth("/api/shop/items", { method: "GET" });
-      setItems(Array.isArray(data) ? data : data.items || data.listings || []);
+      const data = await fetchWithAuth("/api/shop/purchase", {
+        method: "POST",
+        body: JSON.stringify({ listingId: listingId }),
+      });
+      console.log("Réponse achat:", data);
+      let msg = "Achat réussi !";
+      if (data.status === "delivered") {
+        msg = data.message || "Achat réussi ! Item livré.";
+        setPurchaseStatus({ message: msg, type: "success", listingId });
+      } else if (data.status === "pending_delivery") {
+        msg = data.message || "Achat réussi ! Utilisez /redeem en jeu.";
+        setPurchaseStatus({ message: msg, type: "info", listingId });
+      } else {
+        setPurchaseStatus({
+          message: data.message || "Statut inconnu.",
+          type: "info",
+          listingId,
+        });
+      }
+      fetchShopItems();
     } catch (err) {
-      console.error("Erreur fetchItems:", err);
+      console.error("Erreur achat:", err);
       if (err.message === "Session expirée") {
-        setError("Session expirée. Redirection...");
+        setPurchaseStatus({
+          message: "Session expirée. Reconnectez-vous.",
+          type: "error",
+          listingId,
+        });
         setTimeout(() => router.push("/login"), 3000);
       } else {
-        setError(err.message || "Impossible de charger les items.");
+        setPurchaseStatus({
+          message: err.message || "Erreur lors de l'achat.",
+          type: "error",
+          listingId,
+        });
       }
     } finally {
-      setLoading(false);
+      setPurchasingId(null);
     }
   };
 
-  // Fonction handlePurchase (on la garde mais elle n'est plus appelée par un bouton pour l'instant)
-  const handlePurchase = async (listingId) => {
-    /* ... logique d'achat inchangée ... */
-  };
-
+  // --- Effet Initial pour charger les deux APIs ---
   useEffect(() => {
-    fetchItems(); /* eslint-disable-next-line react-hooks/exhaustive-deps */
-  }, []);
+    // Lance les deux fetches en parallèle
+    Promise.all([fetchShopItems(), fetchMetadata()]).then(
+      ([shopSuccess, metaSuccess]) => {
+        console.log("Initial fetches complete.", { shopSuccess, metaSuccess });
+        // On pourrait gérer des erreurs spécifiques ici si nécessaire
+      }
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Exécuté une seule fois au montage
+
+  // --- Calcul Items Filtrés (inchangé) ---
+  const filteredItems = items.filter((item) => {
+    if (filterMode === "admin") return item.seller === "AdminShop";
+    if (filterMode === "players") return item.seller !== "AdminShop";
+    return true;
+  });
 
   // --- Rendu ---
-  if (loading) {
-    /* ... JSX chargement ... */
+  // Attend que les DEUX chargements soient terminés
+  if (loadingShop || loadingMeta) {
     return (
-      <div className="flex flex-col justify-center items-center min-h-screen bg-gray-900 text-white font-minecraft">
-        <div className="p-6 bg-black bg-opacity-30 border-2 border-gray-600">
-          Chargement du marché...
+      <div className="flex flex-col justify-center items-center min-h-screen bg-[#373737] text-white font-minecraft">
+        <div className="p-6 bg-black bg-opacity-30 border-2 border-gray-600 shadow-pixel-md">
+          Chargement...
         </div>
       </div>
     );
   }
-  if (error && !loading) {
-    /* ... JSX erreur ... */
+  // Affiche l'erreur principale si le chargement du shop a échoué
+  if (error && items.length === 0) {
+    // Vérifie items.length pour distinguer erreur de chargement vs erreur metadata
     return (
-      <div className="flex flex-col justify-center items-center min-h-screen bg-gray-900 text-red-400 font-minecraft p-4">
-        <div className="p-6 bg-black bg-opacity-50 border-2 border-red-700 text-center">
-          <p className="text-xl mb-4">Erreur : {error}</p>
+      <div className="flex flex-col justify-center items-center min-h-screen bg-[#373737] text-red-300 font-minecraft p-4">
+        <div className="p-6 bg-black bg-opacity-50 border-2 border-red-700 text-center shadow-pixel-md">
+          <p className="text-xl mb-4 text-shadow-sm">Erreur : {error}</p>
           {!error.includes("Redirection") && (
             <button
-              onClick={fetchItems}
-              className="mt-4 px-4 py-2 bg-gray-500 text-white border-2 border-t-gray-400 border-l-gray-400 border-b-gray-700 border-r-gray-700 hover:bg-gray-600 active:bg-gray-700 active:border-t-gray-700 active:border-b-gray-400"
+              onClick={() => {
+                fetchShopItems();
+                fetchMetadata();
+              }}
+              className="mt-4 px-4 py-2 bg-gray-500 text-white border-2 border-t-gray-400 border-l-gray-400 border-b-gray-700 border-r-gray-700 hover:bg-gray-600 active:bg-gray-700 active:border-t-gray-700 active:border-b-gray-400 shadow-pixel-sm active:shadow-none active:translate-y-px"
             >
               Réessayer
             </button>
           )}
           <button
             onClick={() => router.push("/login")}
-            className="mt-2 ml-2 px-4 py-2 bg-gray-600 text-white border-2 border-t-gray-500 border-l-gray-500 border-b-gray-800 border-r-gray-800 hover:bg-gray-700"
+            className="mt-2 ml-2 px-4 py-2 bg-gray-600 text-white border-2 border-t-gray-500 border-l-gray-500 border-b-gray-800 border-r-gray-800 hover:bg-gray-700 shadow-pixel-sm active:shadow-none active:translate-y-px"
           >
             Connexion
           </button>
@@ -115,155 +213,199 @@ export default function ShopPage() {
     );
   }
 
-  // Affichage normal - Style inspiré de l'image
+  // Affichage normal
   return (
-    <div className="min-h-screen bg-[#313131] p-0 font-minecraft text-white antialiased flex justify-center">
-      {/* Conteneur principal avec largeur max */}
-      <div className="w-full max-w-screen-lg bg-[#484848] shadow-lg flex flex-col">
-        {/* TODO: Bannière décorative haute (style auvent vert/blanc) */}
-        <div className="h-8 bg-gradient-to-r from-lime-500 via-white to-lime-500 opacity-50">
-          {/* Placeholder pour l'auvent */}
-        </div>
-
-        {/* Header Principal */}
-        <div className="flex justify-between items-center p-3 px-5 bg-black bg-opacity-30 border-b-2 border-black/50">
-          <h1 className="text-3xl font-bold text-lime-400 text-shadow-sm">
-            MARKET
-          </h1>
-          {/* TODO: Afficher les vraies infos utilisateur */}
-          <div className="text-right text-sm">
-            <div>
-              <span className="text-lime-300">959.475</span> $
-            </div>
-            <div>
-              <span className="text-lime-300">4.500</span> PB
-            </div>
-          </div>
-        </div>
-
-        {/* Barre d'onglets */}
-        <div className="flex items-center bg-black bg-opacity-20 px-3 py-1 border-b-2 border-black/50">
-          {/* Onglet Actif */}
-          <button className="px-5 py-2 bg-red-600 text-white font-bold text-sm border-2 border-t-red-500 border-l-red-500 border-b-red-800 border-r-red-800 mr-2">
-            ACHETER
-          </button>
-          {/* Autres Onglets (non actifs) */}
-          <button className="px-5 py-2 bg-gray-600 text-gray-300 font-bold text-sm border-2 border-t-gray-500 border-l-gray-500 border-b-gray-800 border-r-gray-800 mr-1 hover:bg-gray-700">
-            VENDRE
-          </button>
-          <button className="px-4 py-2 bg-gray-600 text-gray-300 font-bold text-sm border-2 border-t-gray-500 border-l-gray-500 border-b-gray-800 border-r-gray-800 mr-1 hover:bg-gray-700">
-            STATS
-          </button>
-          <button className="px-4 py-2 bg-gray-600 text-gray-300 font-bold text-sm border-2 border-t-gray-500 border-l-gray-500 border-b-gray-800 border-r-gray-800 mr-1 hover:bg-gray-700">
-            HISTORIQUE
-          </button>
-        </div>
-
-        {/* Barre d'actions (Recherche, Filtres) */}
-        <div className="flex items-center gap-2 p-3 bg-black bg-opacity-10 border-b-2 border-black/50">
-          {/* Input Recherche (Style simple) */}
-          <input
-            type="text"
-            placeholder="Rechercher..."
-            className="flex-grow px-2 py-1 bg-gray-700 border border-gray-500 text-white placeholder-gray-400 text-sm focus:outline-none focus:border-gray-400"
-          />
-          {/* Bouton Icone (Placeholder) */}
-          <button className="p-1 bg-red-600 border border-red-800 w-7 h-7 flex items-center justify-center text-white">
-            🔍
-          </button>{" "}
-          {/* Icone simple */}
-          {/* Dropdown Catégorie (Style simple) */}
-          <select className="px-2 py-1 bg-gray-700 border border-gray-500 text-white text-sm focus:outline-none appearance-none w-32">
-            <option>Catégorie</option> {/* TODO: Remplir les options */}
-          </select>
-          {/* Dropdown Trier Par (Style simple) */}
-          <select className="px-2 py-1 bg-gray-700 border border-gray-500 text-white text-sm focus:outline-none appearance-none w-32">
-            <option>Trier par</option> {/* TODO: Remplir les options */}
-          </select>
-          {/* Bouton Icone (Placeholder) */}
-          <button className="p-1 bg-red-600 border border-red-800 w-7 h-7 flex items-center justify-center text-white">
-            ⚙️
-          </button>{" "}
-          {/* Icone simple */}
-        </div>
-
-        {/* --- Liste des Items --- */}
-        {/* Conteneur scrollable si besoin */}
-        <div className="flex-grow overflow-y-auto p-2 bg-[#313131]">
-          {items.length === 0 ? (
-            <p className="text-center text-gray-400 mt-10 text-lg">
-              Le marché est vide !
-            </p>
-          ) : (
-            <div className="space-y-1">
+    <div className="min-h-screen bg-[#373737] p-4 sm:p-6 md:p-8 font-minecraft text-white antialiased">
+      {/* Header */}
+      <div className="mb-6 p-4 bg-gradient-to-b from-gray-700 to-gray-800 border-t-2 border-b-2 border-t-gray-500 border-b-black/50 shadow-lg text-center">
+        {" "}
+        <h1 className="text-4xl font-bold text-lime-300 text-shadow-md">
+          SHOP
+        </h1>{" "}
+        <div className="mt-2 text-sm text-gray-400">
+          (Pseudo, Solde, Déconnexion)
+        </div>{" "}
+      </div>
+      {/* Barre de Filtres */}
+      <div className="mb-6 flex justify-center items-center gap-2 sm:gap-4 p-2 bg-black bg-opacity-20 rounded-md shadow-inner border border-black/50">
+        {" "}
+        {["all", "admin", "players"].map((mode) => {
+          const isActive = filterMode === mode;
+          let label = "";
+          let baseBg = "bg-gray-600",
+            hoverBg = "hover:bg-gray-700",
+            activeStateBg = "bg-gray-700",
+            activeBorder =
+              "active:border-t-gray-800 active:border-l-gray-800 active:border-b-gray-500 active:border-r-gray-500",
+            normalBorder =
+              "border-t-gray-500 border-l-gray-500 border-b-gray-800 border-r-gray-800",
+            activeClass = "translate-y-px shadow-none brightness-90";
+          switch (mode) {
+            case "all":
+              label = "Tous";
+              baseBg = "bg-green-600";
+              hoverBg = "hover:bg-green-700";
+              activeStateBg = "bg-green-800";
+              activeBorder =
+                "active:border-t-green-900 active:border-l-green-900 active:border-b-green-600 active:border-r-green-600";
+              normalBorder =
+                "border-t-green-500 border-l-green-500 border-b-green-800 border-r-green-800";
+              break;
+            case "admin":
+              label = "AdminShop";
+              baseBg = "bg-yellow-600";
+              hoverBg = "hover:bg-yellow-700";
+              activeStateBg = "bg-yellow-800";
+              activeBorder =
+                "active:border-t-yellow-900 active:border-l-yellow-900 active:border-b-yellow-600 active:border-r-yellow-600";
+              normalBorder =
+                "border-t-yellow-500 border-l-yellow-500 border-b-yellow-800 border-r-yellow-800";
+              break;
+            case "players":
+              label = "Joueurs";
+              baseBg = "bg-blue-600";
+              hoverBg = "hover:bg-blue-700";
+              activeStateBg = "bg-blue-800";
+              activeBorder =
+                "active:border-t-blue-900 active:border-l-blue-900 active:border-b-blue-600 active:border-r-blue-600";
+              normalBorder =
+                "border-t-blue-500 border-l-blue-500 border-b-blue-800 border-r-blue-800";
+              break;
+          }
+          return (
+            <button
+              key={mode}
+              onClick={() => setFilterMode(mode)}
+              className={` py-1.5 px-4 font-minecraft text-xs sm:text-sm text-white focus:outline-none transition-all duration-100 ease-out border-2 shadow-pixel-sm text-shadow-sm ${
+                isActive
+                  ? `${activeStateBg} ${activeBorder} ${activeClass}`
+                  : `${baseBg} ${normalBorder} ${hoverBg} active:${activeStateBg} ${activeBorder} active:shadow-none active:translate-y-px active:brightness-90`
+              } `}
+            >
               {" "}
-              {/* Espace entre les lignes */}
-              {items.map((item) => (
-                // --- Ligne d'item ---
-                <div
-                  key={item.listingId}
-                  // Fond légèrement différent, bordure basse pour séparation
-                  className={`flex items-center p-2 bg-black bg-opacity-20 border-b border-gray-600/50 cursor-pointer hover:bg-opacity-30 transition-colors duration-100
-                         ${
-                           item.seller === "AdminShop"
-                             ? "border-l-4 border-yellow-500 pl-1"
-                             : ""
-                         } // Marqueur AdminShop
-                     `}
-                  // TODO: Ajouter onClick pour ouvrir détails/acheter ?
-                  // onClick={() => handlePurchase(item.listingId)}
-                >
-                  {/* Icone Item */}
-                  <div className="mr-3">
-                    <ItemPlaceholderIcon size="w-8 h-8" />{" "}
-                    {/* Icone plus petite */}
-                  </div>
+              {label}{" "}
+            </button>
+          );
+        })}{" "}
+      </div>
+      {/* Message Statut Achat */}
+      {purchaseStatus.message && (
+        <div
+          className={`mb-6 p-3 rounded text-center border ${
+            purchaseStatus.type === "success"
+              ? "bg-green-800/70 border-green-600 text-green-100"
+              : purchaseStatus.type === "error"
+              ? "bg-red-800/70 border-red-600 text-red-200"
+              : "bg-blue-800/70 border-blue-600 text-blue-100"
+          } shadow-md`}
+        >
+          {" "}
+          {purchaseStatus.message}{" "}
+        </div>
+      )}
 
-                  {/* Nom Item */}
-                  <div
-                    className="flex-grow font-semibold text-sm text-white mr-4"
+      {/* Grille des Items */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+        {filteredItems.length === 0 ? (
+          <p className="col-span-full text-center text-gray-400 mt-10 text-lg">
+            {" "}
+            {filterMode === "admin"
+              ? "Aucun item AdminShop trouvé."
+              : filterMode === "players"
+              ? "Aucun item de joueur trouvé."
+              : "Le shop est vide !"}{" "}
+          </p>
+        ) : (
+          filteredItems.map((item) => {
+            // --- Récupération de l'image depuis les métadonnées ---
+            // Utilise item.itemId (ou item.namespacedId si c'est ça que ton API renvoie)
+            const meta = itemMetadataMap?.get(item.itemId || item.namespacedId);
+            const imageUrl = meta?.image; // Prend l'URL de l'image depuis les métadonnées
+            // ---
+
+            return (
+              // --- Carte d'item ---
+              <div
+                key={item.listingId}
+                className={`bg-[#1E1E1E] border-4 border-t-[#555555] border-l-[#555555] border-b-[#2a2a2a] border-r-[#2a2a2a] p-3 flex flex-col justify-between shadow-pixel-md relative transition-transform hover:scale-[1.03] duration-150 ${
+                  item.seller === "AdminShop"
+                    ? "outline outline-2 outline-yellow-400 outline-offset-[-4px]"
+                    : ""
+                }`}
+              >
+                {item.seller === "AdminShop" && (
+                  <span className="absolute top-1 right-1 bg-yellow-500 text-black text-[9px] px-1 leading-none font-bold border border-yellow-700 shadow-sm z-10">
+                    ADMIN
+                  </span>
+                )}
+                <div className="flex-grow mb-3 flex flex-col text-center">
+                  {/* Icone / Image */}
+                  <div className="mb-4 mt-1 h-16 w-16 mx-auto flex items-center justify-center bg-black/30 border border-gray-600/50 shadow-inner">
+                    {imageUrl ? ( // Affiche l'image si l'URL a été trouvée
+                      <Image
+                        src={imageUrl}
+                        alt={item.name}
+                        width={48}
+                        height={48}
+                        unoptimized={true}
+                        className="object-contain image-rendering-pixelated"
+                        onError={(e) => {
+                          try {
+                            e.currentTarget.src = "/images/items/default.png";
+                            e.currentTarget.onerror = null;
+                          } catch (err) {
+                            console.error("Erreur fallback image", err);
+                          }
+                        }}
+                      />
+                    ) : (
+                      // Sinon, affiche un placeholder
+                      <div className="w-full h-full flex items-center justify-center text-gray-500 text-xs italic">
+                        ?
+                      </div>
+                    )}
+                  </div>
+                  {/* Reste des infos */}
+                  <h2
+                    className="text-base font-bold text-white mb-2 leading-tight text-shadow-sm"
                     title={item.name}
                   >
-                    {/* Optionnel: Ajouter une étoile ou autre pour AdminShop */}
-                    {item.seller === "AdminShop" && (
-                      <span className="text-yellow-400 mr-1">★</span>
-                    )}
                     {item.name}
-                    {/* Affichage Quantité sous le nom */}
-                    <span className="block text-xs text-gray-400">
-                      (Qt: {item.quantity})
-                    </span>
-                  </div>
-
-                  {/* Vendeur */}
-                  <div
-                    className="w-28 shrink-0 text-xs text-gray-300 mr-4 text-left overflow-hidden whitespace-nowrap text-ellipsis"
-                    title={item.seller}
-                  >
-                    <SellerHeadPlaceholder size="w-4 h-4" />{" "}
-                    {/* Placeholder tête */}
-                    {item.seller}
-                  </div>
-
-                  {/* Prix (PB - Placeholder) */}
-                  <div className="w-20 shrink-0 text-sm text-lime-300 font-bold text-right mr-4">
-                    {/* Remplacer par le vrai prix PB si disponible */}
-                    {Math.floor(item.price * 10)} PB
-                  </div>
-
-                  {/* Prix ($/€) */}
-                  <div className="w-20 shrink-0 text-sm text-yellow-400 font-bold text-right">
-                    {item.price} $ {/* Utilise $ ou € */}
+                  </h2>
+                  <p className="text-lg font-bold text-yellow-300 mb-3 leading-tight text-shadow-sm">
+                    {item.price} <span className="text-sm">$</span>
+                  </p>
+                  <div className="text-[11px] text-gray-400 mb-3 leading-tight">
+                    {" "}
+                    <span>Qt: {item.quantity}</span>{" "}
+                    <span className="mx-1.5">|</span>{" "}
+                    <span title={item.seller}>Par: {item.seller}</span>{" "}
                   </div>
                 </div>
-                // --- Fin Ligne d'item ---
-              ))}
-            </div>
-          )}
-        </div>
-        {/* --- Fin Liste des Items --- */}
-      </div>{" "}
-      {/* Fin Conteneur principal */}
-    </div> // Fin div racine
+                {/* Bouton Acheter */}
+                <div className="mt-auto">
+                  {" "}
+                  <button
+                    onClick={() => handlePurchase(item.listingId)}
+                    disabled={purchasingId === item.listingId || !!error}
+                    className={` w-full py-2 px-2 font-minecraft text-sm text-white focus:outline-none transition-all duration-100 ease-out border-2 shadow-pixel-sm ${
+                      purchasingId === item.listingId || !!error
+                        ? "bg-gray-600 border-gray-700 text-gray-400 cursor-wait shadow-none"
+                        : `bg-blue-600 border-t-blue-400 border-l-blue-400 border-b-blue-800 border-r-blue-800 hover:bg-blue-700 hover:brightness-110 active:bg-blue-800 active:border-t-blue-800 active:border-l-blue-800 active:border-b-blue-400 active:border-r-blue-400 active:shadow-none active:translate-y-px active:brightness-90`
+                    } `}
+                  >
+                    {" "}
+                    {purchasingId === item.listingId
+                      ? "Achat..."
+                      : "Acheter"}{" "}
+                  </button>{" "}
+                </div>
+              </div>
+              // --- Fin Carte d'item ---
+            );
+          }) // Fin map
+        )}
+      </div>
+    </div>
   );
 }
