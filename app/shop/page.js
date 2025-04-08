@@ -1,80 +1,123 @@
 // app/shop/page.js
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { fetchWithAuth } from "../../utils/apiClient";
+import { useAuth } from "../context/AuthContext";
 
-const ACCESS_TOKEN_KEY = "accessToken";
-const REFRESH_TOKEN_KEY = "refreshToken";
-const VERCEL_API_URL = "https://minecraft-api.vercel.app/api/items"; // URL de l'API externe
+// Importe les composants enfants
+import ShopHeader from "../components/ShopHeader";
+import PurchaseStatusAlert from "../components/PurchaseStatusAlert";
+import ItemCard from "../components/ItemCard"; // On va devoir le modifier aussi
+
+// Importe les composants shadcn/ui
+import { Button } from "@/components/ui/button"; // Assure-toi qu'il est importé
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Search, ArrowUpDown } from "lucide-react";
+// Imports pour la modale Dialog
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogClose, // Pour le bouton Fermer
+} from "@/components/ui/dialog";
+
+const VERCEL_API_URL = "https://minecraft-api.vercel.app/api/items";
+
+// Fonction pour formater la date
+const formatDate = (dateString) => {
+  if (!dateString) return "Date inconnue";
+  try {
+    const date = new Date(dateString);
+    const options = {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    };
+    return date.toLocaleDateString("fr-CH", options);
+  } catch (e) {
+    console.error("Error formatting date:", e);
+    return dateString;
+  }
+};
 
 export default function ShopPage() {
   // --- États ---
-  const [items, setItems] = useState([]); // Items de notre shop API
-  const [itemMetadataMap, setItemMetadataMap] = useState(null); // Map des métadonnées Vercel (key: namespacedId)
-  const [loadingShop, setLoadingShop] = useState(true); // Chargement de notre API
-  const [loadingMeta, setLoadingMeta] = useState(true); // Chargement de l'API Vercel
-  const [error, setError] = useState("");
+  const {
+    user,
+    isAuthenticated,
+    isLoading: isAuthLoading,
+    fetchUserData,
+  } = useAuth();
   const router = useRouter();
+  const [items, setItems] = useState([]);
+  const [itemMetadataMap, setItemMetadataMap] = useState(null);
+  const [loadingShop, setLoadingShop] = useState(true);
+  const [loadingMeta, setLoadingMeta] = useState(true);
+  const [error, setError] = useState("");
   const [purchaseStatus, setPurchaseStatus] = useState({
     message: "",
     type: "",
     listingId: null,
   });
   const [purchasingId, setPurchasingId] = useState(null);
+
+  // --- États pour Filtre/Tri/Recherche ---
   const [filterMode, setFilterMode] = useState("all");
+  const [sortKey, setSortKey] = useState("listedAt");
+  const [sortOrder, setSortOrder] = useState("desc");
+  const [searchQuery, setSearchQuery] = useState("");
 
-  // --- Fonctions API ---
+  // --- Nouvel état pour la modale ---
+  const [selectedItem, setSelectedItem] = useState(null); // Stocke l'item cliqué
+  const [isModalOpen, setIsModalOpen] = useState(false); // Contrôle l'ouverture
 
-  // Récupère les items en vente depuis notre API
+  // --- Fonctions API (fetchShopItems, fetchMetadata inchangées) ---
   const fetchShopItems = async () => {
     setLoadingShop(true);
     setError("");
     setPurchaseStatus({ message: "", type: "", listingId: null });
-    if (!localStorage.getItem(ACCESS_TOKEN_KEY)) {
-      setError("Non connecté. Redirection...");
-      setLoadingShop(false);
-      setLoadingMeta(false);
-      localStorage.removeItem(ACCESS_TOKEN_KEY);
-      localStorage.removeItem(REFRESH_TOKEN_KEY);
-      setTimeout(() => router.push("/login"), 2000);
-      return false;
-    } // Indique échec
     try {
       const data = await fetchWithAuth("/api/shop/items", { method: "GET" });
       setItems(Array.isArray(data) ? data : data.items || data.listings || []);
-      return true; // Indique succès
+      return true;
     } catch (err) {
       console.error("Erreur fetchShopItems:", err);
       if (err.message === "Session expirée") {
-        setError("Session expirée. Redirection...");
-        setTimeout(() => router.push("/login"), 3000);
+        setError("Session expirée.");
       } else {
         setError(err.message || "Impossible de charger les items du shop.");
       }
-      return false; // Indique échec
+      return false;
     } finally {
       setLoadingShop(false);
     }
   };
 
-  // Récupère les métadonnées (images, etc.) depuis l'API Vercel
   const fetchMetadata = async () => {
     setLoadingMeta(true);
     try {
-      console.log("Fetching metadata from Vercel API...");
       const response = await fetch(VERCEL_API_URL);
       if (!response.ok) {
-        throw new Error(
-          `Erreur ${response.status} lors de la récupération des métadonnées.`
-        );
+        throw new Error(`Erreur ${response.status} (Metadata API)`);
       }
       const metaDataArray = await response.json();
-      console.log(`Metadata received: ${metaDataArray.length} items`);
-
-      // Convertit le tableau en Map pour accès rapide par namespacedId
       const map = new Map();
       metaDataArray.forEach((metaItem) => {
         if (metaItem.namespacedId) {
@@ -82,36 +125,27 @@ export default function ShopPage() {
         }
       });
       setItemMetadataMap(map);
-      console.log("Metadata Map created.");
-      return true; // Succès
+      return true;
     } catch (err) {
       console.error("Erreur fetchMetadata:", err);
-      // On peut choisir de continuer sans les images ou afficher une erreur bloquante
       setError((prev) =>
         prev
           ? `${prev}\nErreur métadonnées: ${err.message}`
           : `Erreur métadonnées: ${err.message}`
       );
-      setItemMetadataMap(new Map()); // Initialise une map vide pour éviter les erreurs plus loin
-      return false; // Échec
+      setItemMetadataMap(new Map());
+      return false;
     } finally {
       setLoadingMeta(false);
     }
   };
 
-  // Logique d'achat (inchangée)
+  // handlePurchase modifié pour fermer la modale si besoin
   const handlePurchase = async (listingId) => {
-    /* ... */ console.log(`Tentative achat: ${listingId}`);
+    if (!listingId) return; // Sécurité
+    console.log(`Tentative achat depuis modale: ${listingId}`);
     setPurchasingId(listingId);
-    setPurchaseStatus({ message: "", type: "", listingId: null });
-    if (!localStorage.getItem(ACCESS_TOKEN_KEY)) {
-      setError("Non connecté. Redirection...");
-      setPurchasingId(null);
-      localStorage.removeItem(ACCESS_TOKEN_KEY);
-      localStorage.removeItem(REFRESH_TOKEN_KEY);
-      setTimeout(() => router.push("/login"), 2000);
-      return;
-    }
+    setPurchaseStatus({ message: "", type: "", listingId: null }); // Clear l'alerte globale
     try {
       const data = await fetchWithAuth("/api/shop/purchase", {
         method: "POST",
@@ -132,280 +166,324 @@ export default function ShopPage() {
           listingId,
         });
       }
-      fetchShopItems();
+      await fetchUserData();
+      await fetchShopItems(); // Utilise await pour être sûr que c'est fini avant de fermer
+      setIsModalOpen(false); // Ferme la modale après succès
     } catch (err) {
       console.error("Erreur achat:", err);
       if (err.message === "Session expirée") {
         setPurchaseStatus({
-          message: "Session expirée. Reconnectez-vous.",
+          message: "Session expirée.",
           type: "error",
           listingId,
         });
-        setTimeout(() => router.push("/login"), 3000);
+        setIsModalOpen(false); // Ferme aussi en cas d'erreur de session
       } else {
         setPurchaseStatus({
           message: err.message || "Erreur lors de l'achat.",
           type: "error",
           listingId,
         });
+        // Ne ferme pas la modale pour les autres erreurs d'achat
       }
     } finally {
       setPurchasingId(null);
     }
   };
 
-  // --- Effet Initial pour charger les deux APIs ---
-  useEffect(() => {
-    // Lance les deux fetches en parallèle
-    Promise.all([fetchShopItems(), fetchMetadata()]).then(
-      ([shopSuccess, metaSuccess]) => {
-        console.log("Initial fetches complete.", { shopSuccess, metaSuccess });
-        // On pourrait gérer des erreurs spécifiques ici si nécessaire
-      }
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Exécuté une seule fois au montage
+  const clearPurchaseStatus = () => {
+    setPurchaseStatus({ message: "", type: "", listingId: null });
+  };
 
-  // --- Calcul Items Filtrés (inchangé) ---
-  const filteredItems = items.filter((item) => {
-    if (filterMode === "admin") return item.seller === "AdminShop";
-    if (filterMode === "players") return item.seller !== "AdminShop";
-    return true;
-  });
+  useEffect(() => {
+    if (!isAuthLoading) {
+      if (!isAuthenticated) {
+        router.push("/login");
+      } else {
+        Promise.all([fetchShopItems(), fetchMetadata()]).then(
+          ([shopSuccess, metaSuccess]) => {
+            if (!user && shopSuccess) {
+              fetchUserData();
+            }
+          }
+        );
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, isAuthLoading, router]);
+
+  const processedItems = useMemo(() => {
+    console.log("Recalculating processedItems...");
+    let tempItems = [...items];
+
+    // 1. Filtre par Mode
+    if (filterMode === "admin") {
+      tempItems = tempItems.filter((item) => item.seller === "AdminShop");
+    } else if (filterMode === "players") {
+      tempItems = tempItems.filter((item) => item.seller !== "AdminShop");
+    }
+
+    // 2. Filtre par Recherche
+    const query = searchQuery.toLowerCase().trim();
+    if (query) {
+      tempItems = tempItems.filter((item) =>
+        item.name.toLowerCase().includes(query)
+      );
+    }
+
+    // 3. Tri
+    tempItems.sort((a, b) => {
+      let compareA = a[sortKey];
+      let compareB = b[sortKey];
+      if (sortKey === "listedAt") {
+        compareA = new Date(compareA).getTime() || 0;
+        compareB = new Date(compareB).getTime() || 0;
+      } else if (sortKey === "price") {
+        compareA = Number(compareA) || 0;
+        compareB = Number(compareB) || 0;
+      } else if (sortKey === "name") {
+        compareA = String(compareA).toLowerCase();
+        compareB = String(compareB).toLowerCase();
+        return sortOrder === "asc"
+          ? compareA.localeCompare(compareB)
+          : compareB.localeCompare(compareA);
+      }
+      return sortOrder === "asc" ? compareA - compareB : compareB - compareA;
+    });
+    return tempItems;
+  }, [items, filterMode, searchQuery, sortKey, sortOrder]);
+
+  // --- Fonction pour ouvrir la modale ---
+  const handleItemClick = (item) => {
+    console.log("Item clicked for modal:", item);
+    setSelectedItem(item);
+    setIsModalOpen(true);
+    clearPurchaseStatus(); // Nettoie les anciens messages d'achat
+  };
 
   // --- Rendu ---
-  // Attend que les DEUX chargements soient terminés
-  if (loadingShop || loadingMeta) {
-    return (
-      <div className="flex flex-col justify-center items-center min-h-screen bg-[#373737] text-white font-minecraft">
-        <div className="p-6 bg-black bg-opacity-30 border-2 border-gray-600 shadow-pixel-md">
-          Chargement...
-        </div>
-      </div>
-    );
+  if (isAuthLoading || loadingShop || loadingMeta) {
+    /* ... Loading JSX ... */
   }
-  // Affiche l'erreur principale si le chargement du shop a échoué
-  if (error && items.length === 0) {
-    // Vérifie items.length pour distinguer erreur de chargement vs erreur metadata
-    return (
-      <div className="flex flex-col justify-center items-center min-h-screen bg-[#373737] text-red-300 font-minecraft p-4">
-        <div className="p-6 bg-black bg-opacity-50 border-2 border-red-700 text-center shadow-pixel-md">
-          <p className="text-xl mb-4 text-shadow-sm">Erreur : {error}</p>
-          {!error.includes("Redirection") && (
-            <button
-              onClick={() => {
-                fetchShopItems();
-                fetchMetadata();
-              }}
-              className="mt-4 px-4 py-2 bg-gray-500 text-white border-2 border-t-gray-400 border-l-gray-400 border-b-gray-700 border-r-gray-700 hover:bg-gray-600 active:bg-gray-700 active:border-t-gray-700 active:border-b-gray-400 shadow-pixel-sm active:shadow-none active:translate-y-px"
-            >
-              Réessayer
-            </button>
-          )}
-          <button
-            onClick={() => router.push("/login")}
-            className="mt-2 ml-2 px-4 py-2 bg-gray-600 text-white border-2 border-t-gray-500 border-l-gray-500 border-b-gray-800 border-r-gray-800 hover:bg-gray-700 shadow-pixel-sm active:shadow-none active:translate-y-px"
-          >
-            Connexion
-          </button>
-        </div>
-      </div>
-    );
+  if (!isAuthenticated && !isAuthLoading) {
+    /* ... Redirecting JSX ... */
+  }
+  if (error && items.length === 0 && !loadingShop) {
+    /* ... Error JSX ... */
   }
 
-  // Affichage normal
+  // Logique pour l'image de l'item sélectionné (pour la modale)
+  const selectedItemMeta = selectedItem
+    ? itemMetadataMap?.get(selectedItem.itemId || selectedItem.namespacedId)
+    : null;
+  const selectedItemImageUrl = selectedItemMeta?.image;
+
   return (
-    <div className="min-h-screen bg-[#373737] p-4 sm:p-6 md:p-8 font-minecraft text-white antialiased">
-      {/* Header */}
-      <div className="mb-6 p-4 bg-gradient-to-b from-gray-700 to-gray-800 border-t-2 border-b-2 border-t-gray-500 border-b-black/50 shadow-lg text-center">
-        {" "}
-        <h1 className="text-4xl font-bold text-lime-300 text-shadow-md">
-          SHOP
-        </h1>{" "}
-        <div className="mt-2 text-sm text-gray-400">
-          (Pseudo, Solde, Déconnexion)
-        </div>{" "}
-      </div>
-      {/* Barre de Filtres */}
-      <div className="mb-6 flex justify-center items-center gap-2 sm:gap-4 p-2 bg-black bg-opacity-20 rounded-md shadow-inner border border-black/50">
-        {" "}
-        {["all", "admin", "players"].map((mode) => {
-          const isActive = filterMode === mode;
-          let label = "";
-          let baseBg = "bg-gray-600",
-            hoverBg = "hover:bg-gray-700",
-            activeStateBg = "bg-gray-700",
-            activeBorder =
-              "active:border-t-gray-800 active:border-l-gray-800 active:border-b-gray-500 active:border-r-gray-500",
-            normalBorder =
-              "border-t-gray-500 border-l-gray-500 border-b-gray-800 border-r-gray-800",
-            activeClass = "translate-y-px shadow-none brightness-90";
-          switch (mode) {
-            case "all":
-              label = "Tous";
-              baseBg = "bg-green-600";
-              hoverBg = "hover:bg-green-700";
-              activeStateBg = "bg-green-800";
-              activeBorder =
-                "active:border-t-green-900 active:border-l-green-900 active:border-b-green-600 active:border-r-green-600";
-              normalBorder =
-                "border-t-green-500 border-l-green-500 border-b-green-800 border-r-green-800";
-              break;
-            case "admin":
-              label = "AdminShop";
-              baseBg = "bg-yellow-600";
-              hoverBg = "hover:bg-yellow-700";
-              activeStateBg = "bg-yellow-800";
-              activeBorder =
-                "active:border-t-yellow-900 active:border-l-yellow-900 active:border-b-yellow-600 active:border-r-yellow-600";
-              normalBorder =
-                "border-t-yellow-500 border-l-yellow-500 border-b-yellow-800 border-r-yellow-800";
-              break;
-            case "players":
-              label = "Joueurs";
-              baseBg = "bg-blue-600";
-              hoverBg = "hover:bg-blue-700";
-              activeStateBg = "bg-blue-800";
-              activeBorder =
-                "active:border-t-blue-900 active:border-l-blue-900 active:border-b-blue-600 active:border-r-blue-600";
-              normalBorder =
-                "border-t-blue-500 border-l-blue-500 border-b-blue-800 border-r-blue-800";
-              break;
-          }
-          return (
-            <button
-              key={mode}
-              onClick={() => setFilterMode(mode)}
-              className={` py-1.5 px-4 font-minecraft text-xs sm:text-sm text-white focus:outline-none transition-all duration-100 ease-out border-2 shadow-pixel-sm text-shadow-sm ${
-                isActive
-                  ? `${activeStateBg} ${activeBorder} ${activeClass}`
-                  : `${baseBg} ${normalBorder} ${hoverBg} active:${activeStateBg} ${activeBorder} active:shadow-none active:translate-y-px active:brightness-90`
-              } `}
-            >
-              {" "}
-              {label}{" "}
-            </button>
-          );
-        })}{" "}
-      </div>
-      {/* Message Statut Achat */}
-      {purchaseStatus.message && (
-        <div
-          className={`mb-6 p-3 rounded text-center border ${
-            purchaseStatus.type === "success"
-              ? "bg-green-800/70 border-green-600 text-green-100"
-              : purchaseStatus.type === "error"
-              ? "bg-red-800/70 border-red-600 text-red-200"
-              : "bg-blue-800/70 border-blue-600 text-blue-100"
-          } shadow-md`}
+    <div className="min-h-screen bg-background p-4 sm:p-6 md:p-8 font-sans text-foreground">
+      <ShopHeader />
+
+      {/* Barre d'Actions Unifiée */}
+      <div className="mb-6 flex flex-col sm:flex-row items-center gap-3 p-3 bg-card border rounded-lg shadow-sm">
+        {/* Filtre (ToggleGroup) */}
+        <ToggleGroup
+          type="single"
+          value={filterMode}
+          onValueChange={(value) => {
+            if (value) setFilterMode(value);
+          }}
+          aria-label="Filtrer les items"
+          className="justify-center sm:justify-start"
+          variant="outline"
+          size="lg"
         >
-          {" "}
-          {purchaseStatus.message}{" "}
+          <ToggleGroupItem
+            value="all"
+            aria-label="Afficher tous les items"
+            className="flex-grow-6"
+          >
+            Tous
+          </ToggleGroupItem>
+          <ToggleGroupItem
+            value="admin"
+            aria-label="Afficher AdminShop"
+            className="flex-grow-12"
+          >
+            AdminShop
+          </ToggleGroupItem>
+          <ToggleGroupItem
+            value="players"
+            aria-label="Afficher Joueurs"
+            className="flex-grow-8"
+          >
+            Joueurs
+          </ToggleGroupItem>
+        </ToggleGroup>
+        {/* Recherche */}
+        <div className="relative w-full sm:flex-grow">
+          <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            type="search"
+            placeholder="Rechercher par nom..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-9 w-full"
+          />
         </div>
-      )}
+        {/* Sélecteurs de Tri */}
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <Select value={sortKey} onValueChange={setSortKey}>
+            <SelectTrigger className="w-full sm:w-[150px]">
+              <SelectValue placeholder="Trier par..." />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="listedAt">Date</SelectItem>
+              <SelectItem value="price">Prix</SelectItem>
+              <SelectItem value="name">Nom</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={sortOrder} onValueChange={setSortOrder}>
+            <SelectTrigger className="w-[80px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="asc">Asc</SelectItem>
+              <SelectItem value="desc">Desc</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <PurchaseStatusAlert
+        status={purchaseStatus}
+        onDismiss={clearPurchaseStatus}
+      />
 
       {/* Grille des Items */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
-        {filteredItems.length === 0 ? (
-          <p className="col-span-full text-center text-gray-400 mt-10 text-lg">
-            {" "}
-            {filterMode === "admin"
-              ? "Aucun item AdminShop trouvé."
-              : filterMode === "players"
-              ? "Aucun item de joueur trouvé."
-              : "Le shop est vide !"}{" "}
+        {processedItems.length === 0 ? (
+          <p className="col-span-full text-center text-muted-foreground mt-10 text-lg">
+            Aucun item ne correspond à vos critères.
           </p>
         ) : (
-          filteredItems.map((item) => {
-            // --- Récupération de l'image depuis les métadonnées ---
-            // Utilise item.itemId (ou item.namespacedId si c'est ça que ton API renvoie)
+          processedItems.map((item) => {
             const meta = itemMetadataMap?.get(item.itemId || item.namespacedId);
-            const imageUrl = meta?.image; // Prend l'URL de l'image depuis les métadonnées
-            // ---
-
+            const imageUrl = meta?.image;
             return (
-              // --- Carte d'item ---
-              <div
-                key={item.listingId}
-                className={`bg-[#1E1E1E] border-4 border-t-[#555555] border-l-[#555555] border-b-[#2a2a2a] border-r-[#2a2a2a] p-3 flex flex-col justify-between shadow-pixel-md relative transition-transform hover:scale-[1.03] duration-150 ${
-                  item.seller === "AdminShop"
-                    ? "outline outline-2 outline-yellow-400 outline-offset-[-4px]"
-                    : ""
-                }`}
-              >
-                {item.seller === "AdminShop" && (
-                  <span className="absolute top-1 right-1 bg-yellow-500 text-black text-[9px] px-1 leading-none font-bold border border-yellow-700 shadow-sm z-10">
-                    ADMIN
-                  </span>
-                )}
-                <div className="flex-grow mb-3 flex flex-col text-center">
-                  {/* Icone / Image */}
-                  <div className="mb-4 mt-1 h-16 w-16 mx-auto flex items-center justify-center bg-black/30 border border-gray-600/50 shadow-inner">
-                    {imageUrl ? ( // Affiche l'image si l'URL a été trouvée
-                      <Image
-                        src={imageUrl}
-                        alt={item.name}
-                        width={48}
-                        height={48}
-                        unoptimized={true}
-                        className="object-contain image-rendering-pixelated"
-                        onError={(e) => {
-                          try {
-                            e.currentTarget.src = "/images/items/default.png";
-                            e.currentTarget.onerror = null;
-                          } catch (err) {
-                            console.error("Erreur fallback image", err);
-                          }
-                        }}
-                      />
-                    ) : (
-                      // Sinon, affiche un placeholder
-                      <div className="w-full h-full flex items-center justify-center text-gray-500 text-xs italic">
-                        ?
-                      </div>
-                    )}
-                  </div>
-                  {/* Reste des infos */}
-                  <h2
-                    className="text-base font-bold text-white mb-2 leading-tight text-shadow-sm"
-                    title={item.name}
-                  >
-                    {item.name}
-                  </h2>
-                  <p className="text-lg font-bold text-yellow-300 mb-3 leading-tight text-shadow-sm">
-                    {item.price} <span className="text-sm">$</span>
-                  </p>
-                  <div className="text-[11px] text-gray-400 mb-3 leading-tight">
-                    {" "}
-                    <span>Qt: {item.quantity}</span>{" "}
-                    <span className="mx-1.5">|</span>{" "}
-                    <span title={item.seller}>Par: {item.seller}</span>{" "}
-                  </div>
-                </div>
-                {/* Bouton Acheter */}
-                <div className="mt-auto">
-                  {" "}
-                  <button
-                    onClick={() => handlePurchase(item.listingId)}
-                    disabled={purchasingId === item.listingId || !!error}
-                    className={` w-full py-2 px-2 font-minecraft text-sm text-white focus:outline-none transition-all duration-100 ease-out border-2 shadow-pixel-sm ${
-                      purchasingId === item.listingId || !!error
-                        ? "bg-gray-600 border-gray-700 text-gray-400 cursor-wait shadow-none"
-                        : `bg-blue-600 border-t-blue-400 border-l-blue-400 border-b-blue-800 border-r-blue-800 hover:bg-blue-700 hover:brightness-110 active:bg-blue-800 active:border-t-blue-800 active:border-l-blue-800 active:border-b-blue-400 active:border-r-blue-400 active:shadow-none active:translate-y-px active:brightness-90`
-                    } `}
-                  >
-                    {" "}
-                    {purchasingId === item.listingId
-                      ? "Achat..."
-                      : "Acheter"}{" "}
-                  </button>{" "}
-                </div>
-              </div>
-              // --- Fin Carte d'item ---
+              // Wrapper Dialog autour de ItemCard
+              // Note: La clé est maintenant sur Dialog pour React
+              <Dialog key={item.listingId}>
+                <DialogTrigger asChild>
+                  {/* Passe une fonction anonyme pour appeler handleItemClick */}
+                  {/* NE PAS passer handlePurchase ici */}
+                  <ItemCard
+                    item={item}
+                    imageUrl={imageUrl}
+                    // isPurchasing n'est plus pertinent pour la carte elle-même
+                    hasError={!!error && items.length === 0}
+                    onClick={() => handleItemClick(item)} // Passe la fonction pour gérer le clic
+                    // onPurchase n'est plus passé à ItemCard
+                  />
+                </DialogTrigger>
+                {/* Le contenu de la modale est défini plus bas */}
+              </Dialog>
             );
-          }) // Fin map
+          })
         )}
       </div>
-    </div>
+
+      {/* Contenu de la Modale (DialogContent) */}
+      {/* Contrôlé par l'état isModalOpen et selectedItem */}
+      <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
+        <DialogContent className="sm:max-w-md bg-[#1E1E1E] border-[#555555] text-white">
+          {selectedItem && ( // S'assurer qu'un item est sélectionné
+            <>
+              <DialogHeader className="items-center pt-4">
+                {" "}
+                {/* Ajout padding top */}
+                <div className="mb-4 h-16 w-16 flex items-center justify-center bg-black/30 border border-gray-600/50 shadow-inner rounded-md">
+                  {" "}
+                  {/* Ajout rounded */}
+                  {selectedItemImageUrl ? (
+                    <Image
+                      src={selectedItemImageUrl}
+                      alt={selectedItem.name}
+                      width={48} // Taille réduite pour mieux fitter
+                      height={48}
+                      unoptimized={true}
+                      className="object-contain image-rendering-pixelated"
+                      onError={(e) => {
+                        e.currentTarget.src = "/images/items/default.png";
+                        e.currentTarget.onerror = null;
+                      }}
+                    />
+                  ) : (
+                    <div className="w-full h-full bg-gray-800 flex items-center justify-center text-gray-500 rounded-md">
+                      ?
+                    </div> // Ajout rounded
+                  )}
+                </div>
+                <DialogTitle className="text-xl text-white text-shadow-sm">
+                  {selectedItem.name}
+                </DialogTitle>
+                <DialogDescription className="text-center text-gray-400 text-xs pt-1 px-4">
+                  {" "}
+                  {/* Ajout padding horizontal */}
+                  Vendu par : {selectedItem.seller}{" "}
+                  <span className="mx-1">|</span> Quantité :{" "}
+                  {selectedItem.quantity} <br />
+                  Mis en vente le : {formatDate(selectedItem.listedAt)}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="py-4 px-4 space-y-3 text-sm text-gray-300 max-h-[40vh] overflow-y-auto">
+                {" "}
+                {/* Limite hauteur et scroll */}
+                {selectedItem.description && (
+                  <div className="border-t border-gray-600 pt-3 mt-3">
+                    {" "}
+                    {/* Ajout mt-3 */}
+                    <p className="font-semibold text-gray-200 mb-1">
+                      Description :
+                    </p>
+                    <p className="whitespace-pre-wrap">
+                      {selectedItem.description}
+                    </p>
+                  </div>
+                )}
+                <div className="text-center text-xl font-bold text-yellow-300 text-shadow-sm pt-3 border-t border-gray-600 mt-3">
+                  {" "}
+                  {/* Ajout bordure et mt */}
+                  Prix : {selectedItem.price} $
+                </div>
+              </div>
+              <DialogFooter className="flex-col sm:flex-row gap-2 pt-4 border-t border-gray-600">
+                <DialogClose asChild>
+                  {/* Bouton Fermer - Reste en outline pour l'instant */}
+                  <Button
+                    type="button"
+                    variant="default" // Utilise la variante par défaut
+                    className="text-white border-gray-500"
+                  >
+                    Fermer
+                  </Button>
+                </DialogClose>
+                {/* Bouton Confirmer Achat - Utilise variant="default" */}
+                <Button
+                  type="button"
+                  variant="default" // Applique la variante par défaut (devrait être le style primaire)
+                  onClick={() => handlePurchase(selectedItem.listingId)}
+                  disabled={purchasingId != null} // La variante gère le style disabled
+                  // Retire les classes bg-* personnalisées d'ici
+                >
+                  {/* Le texte change toujours en fonction de l'état purchasingId */}
+                  {purchasingId === selectedItem.listingId
+                    ? "Achat..."
+                    : "Confirmer Achat"}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div> // Fin du div principal
   );
 }

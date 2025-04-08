@@ -1,8 +1,6 @@
-// tailwind.config.js (ou .mjs)
-
+// tailwind.config.js
 /** @type {import('tailwindcss').Config} */
 module.exports = {
-  // Ou `export default { ... }` pour .mjs
   content: [
     "./app/**/*.{js,ts,jsx,tsx,mdx}",
     "./pages/**/*.{js,ts,jsx,tsx,mdx}",
@@ -15,21 +13,29 @@ module.exports = {
         "geist-sans": ["var(--font-geist-sans)", "sans-serif"],
         "geist-mono": ["var(--font-geist-mono)", "monospace"],
       },
-      // Définir des ombres portées plus nettes
       boxShadow: {
-        "pixel-sm": "2px 2px 0px 0px rgba(0,0,0,0.5)", // Ombre décalée sans flou
+        "pixel-sm": "2px 2px 0px 0px rgba(0,0,0,0.5)",
         "pixel-md": "4px 4px 0px 0px rgba(0,0,0,0.5)",
-        "pixel-inner": "inset 2px 2px 0px 0px rgba(0,0,0,0.3)", // Ombre intérieure
+        "pixel-inner": "inset 2px 2px 0px 0px rgba(0,0,0,0.3)",
       },
-      // Définir des ombres pour le texte
       textShadow: {
-        sm: "1px 1px 0px rgba(0, 0, 0, 0.7)", // Ombre texte nette
+        sm: "1px 1px 0px rgba(0, 0, 0, 0.7)",
         md: "2px 2px 0px rgba(0, 0, 0, 0.7)",
       },
+      // AJOUTER CES DEUX SECTIONS
+      keyframes: {
+        "caret-blink": {
+          "0%,70%,100%": { opacity: "1" },
+          "20%,50%": { opacity: "0" },
+        },
+      },
+      animation: {
+        "caret-blink": "caret-blink 1.2s ease-out infinite",
+      },
+      // FIN DES AJOUTS
     },
   },
   plugins: [
-    // Plugin pour utiliser text-shadow (si tu l'as installé)
-    // require('tailwindcss-textshadow'), // Alternative si tu préfères un plugin
+    // require('tailwindcss-textshadow'),
   ],
 };
