@@ -80,6 +80,8 @@ export function AuthProvider({ children }) {
     const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
     setUser(null);
     setIsAuthenticated(false);
+    console.log("AuthContext: User logged out locally.");
+
     localStorage.removeItem(ACCESS_TOKEN_KEY);
     localStorage.removeItem(REFRESH_TOKEN_KEY);
 

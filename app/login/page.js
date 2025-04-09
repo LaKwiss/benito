@@ -3,29 +3,31 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/AuthContext"; // Adapte chemin
 
 // Importe les composants shadcn/ui
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input"; // Gardé pour le username
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-// Importe les composants InputOTP, y compris le séparateur
 import {
   InputOTP,
   InputOTPGroup,
   InputOTPSlot,
-  InputOTPSeparator, // Ajout de l'import
-} from "@/components/ui/input-otp";
-import { Terminal } from "lucide-react";
+  InputOTPSeparator,
+} from "@/components/ui/input-otp"; // InputOTP importé
+// import { Terminal } from 'lucide-react'; // Optionnel
+
+// Définit les clés ici pour éviter les répétitions
+const ACCESS_TOKEN_KEY = "accessToken";
+const REFRESH_TOKEN_KEY = "refreshToken";
 
 export default function LoginPage() {
   const [username, setUsername] = useState("");
@@ -35,11 +37,27 @@ export default function LoginPage() {
   const { login, isAuthenticated, isLoading: isAuthLoading } = useAuth();
   const router = useRouter();
 
+  // Redirige si déjà authentifié
   useEffect(() => {
     if (!isAuthLoading && isAuthenticated) {
       router.push("/shop");
     }
   }, [isAuthenticated, isAuthLoading, router]);
+
+  // --- NOUVEAU useEffect pour afficher les tokens au chargement ---
+  useEffect(() => {
+    // Ce code s'exécute seulement côté client, après le montage
+    const storedAccessToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+    const storedRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
+
+    console.log("--- Tokens au chargement de la page Login ---");
+    console.log("Access Token:", storedAccessToken || "(Non trouvé)");
+    console.log("Refresh Token:", storedRefreshToken || "(Non trouvé)");
+    console.log("------------------------------------------");
+
+    // Le tableau vide [] assure que cet effet ne s'exécute qu'une seule fois
+  }, []);
+  // --- Fin du nouveau useEffect ---
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -48,15 +66,14 @@ export default function LoginPage() {
 
     const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
     if (!apiBaseUrl) {
-      setError("Config API manquante.");
-      setLoading(false);
-      return;
+      /* ... */
     }
 
     try {
       const response = await fetch(`${apiBaseUrl}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        // Rappel: Vérifie si c'est 'code' ou 'tempCode' pour ton API
         body: JSON.stringify({ username: username, code: code }),
       });
       const data = await response.json();
@@ -65,19 +82,14 @@ export default function LoginPage() {
       if (data.accessToken && data.refreshToken) await login(data);
       else throw new Error("Tokens non reçus.");
     } catch (err) {
-      console.error("Erreur de connexion:", err);
-      setError(err.message || "Échec de la connexion.");
+      /* ... */
     } finally {
       setLoading(false);
     }
   };
 
   if (isAuthLoading || isAuthenticated) {
-    return (
-      <div className="flex justify-center items-center min-h-screen">
-        Chargement...
-      </div>
-    );
+    /* ... */
   }
 
   return (
@@ -91,7 +103,7 @@ export default function LoginPage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Champ Pseudo (inchangé) */}
+            {/* Champ Pseudo */}
             <div className="space-y-1.5">
               <Label htmlFor="username">Pseudo Minecraft</Label>
               <Input
@@ -105,12 +117,13 @@ export default function LoginPage() {
               />
             </div>
 
-            {/* Champ Code avec séparateur */}
+            {/* Champ Code avec InputOTP */}
             <div className="space-y-1.5">
-              <Label htmlFor="code">Code (6 chiffres)</Label>
+              <Label htmlFor="code-otp">Code (6 chiffres)</Label>{" "}
+              {/* Change id si besoin */}
               <div className="flex justify-center">
                 <InputOTP
-                  id="code"
+                  id="code-otp"
                   maxLength={6}
                   value={code}
                   onChange={(value) => setCode(value)}
@@ -121,7 +134,6 @@ export default function LoginPage() {
                     <InputOTPSlot index={1} />
                     <InputOTPSlot index={2} />
                   </InputOTPGroup>
-                  {/* Ajout du séparateur ici */}
                   <InputOTPSeparator />
                   <InputOTPGroup>
                     <InputOTPSlot index={3} />

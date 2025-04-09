@@ -25,10 +25,12 @@ async function refreshToken() {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ refreshToken: currentRefreshToken }),
+      body: JSON.stringify({ token: currentRefreshToken }),
     });
 
     const data = await response.json(); // Toujours lire le JSON
+
+    console.log("Réponse du rafraîchissement:", data);
 
     if (!response.ok) {
       // Si le refresh échoue (ex: refresh token invalide/expiré), on déconnecte
