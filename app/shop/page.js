@@ -477,7 +477,7 @@ export default function ShopPage() {
                   {/* Le texte change toujours en fonction de l'état purchasingId */}
                   {purchasingId === selectedItem.listingId
                     ? "Achat..."
-                    : "Confirmer Achat"}
+                    : "Acheter"}
                 </Button>
               </DialogFooter>
             </>
