@@ -9,8 +9,7 @@ import React, {
   useCallback,
 } from "react";
 import { useRouter } from "next/navigation";
-// On peut aussi importer fetchWithAuth ici si on veut que le contexte gère le fetch user
-import { fetchWithAuth } from "../../utils/apiClient"; // Ajuste le chemin si nécessaire
+import { fetchWithAuth } from "../../utils/apiClient";
 
 const AuthContext = createContext(null);
 
@@ -60,7 +59,7 @@ export function AuthProvider({ children }) {
       // Récupère les données utilisateur après avoir stocké les tokens
       const fetchedUser = await fetchUserData();
       if (fetchedUser) {
-        router.push("/shop"); // Redirige vers le shop si succès
+        router.push("/"); // Redirige vers le shop si succès
       } else {
         // Si fetchUserData échoue juste après login, on logout pour nettoyer
         await logout();

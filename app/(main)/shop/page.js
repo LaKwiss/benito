@@ -4,13 +4,12 @@
 import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { fetchWithAuth } from "../../utils/apiClient";
-import { useAuth } from "../context/AuthContext";
+import { fetchWithAuth } from "../../../utils/apiClient";
+import { useAuth } from "../../context/AuthContext"; // Chemin corrigé
 
 // Importe les composants enfants
-import ShopHeader from "../components/ShopHeader";
-import PurchaseStatusAlert from "../components/PurchaseStatusAlert";
-import ItemCard from "../components/ItemCard"; // On va devoir le modifier aussi
+import PurchaseStatusAlert from "../_components/PurchaseStatusAlert";
+import ItemCard from "../_components/ItemCard"; // On va devoir le modifier aussi
 
 // Importe les composants shadcn/ui
 import { Button } from "@/components/ui/button"; // Assure-toi qu'il est importé
@@ -280,8 +279,6 @@ export default function ShopPage() {
 
   return (
     <div className="min-h-screen bg-background p-4 sm:p-6 md:p-8 font-sans text-foreground">
-      <ShopHeader />
-
       {/* Barre d'Actions Unifiée */}
       <div className="mb-6 flex flex-col sm:flex-row items-center gap-3 p-3 bg-card border rounded-lg shadow-sm">
         {/* Filtre (ToggleGroup) */}

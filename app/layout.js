@@ -1,27 +1,18 @@
-// app/layout.js
-import { Geist, Geist_Mono } from "next/font/google";
+// app/layout.js  <--- C'est ce fichier qu'il faut vérifier
+
+import { AuthProvider } from "./context/AuthContext"; // Chemin vers AuthContext
 import "./globals.css";
-import { AuthProvider } from "./context/AuthContext"; // Importe le Provider
+// ... autres imports (polices, etc.)
 
-const geistSans = Geist({
-  /* ... */
-});
-const geistMono = Geist_Mono({
-  /* ... */
-});
-
-export const metadata = {
-  /* ... */
-};
+// export const metadata = { ... };
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} font-minecraft antialiased`}
-      >
-        {/* Enveloppe l'application avec le Provider */}
+    <html lang="fr">
+      <body /* ... tes classes ... */>
+        {/* 👇 AuthProvider DOIT être ici, autour de children 👇 */}
         <AuthProvider>{children}</AuthProvider>
+        {/* 👆 AuthProvider DOIT être ici, autour de children 👆 */}
       </body>
     </html>
   );

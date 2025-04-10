@@ -40,7 +40,7 @@ export default function LoginPage() {
   // Redirige si déjà authentifié
   useEffect(() => {
     if (!isAuthLoading && isAuthenticated) {
-      router.push("/shop");
+      router.push("/");
     }
   }, [isAuthenticated, isAuthLoading, router]);
 
