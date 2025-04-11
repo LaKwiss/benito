@@ -1,100 +1,111 @@
-// app/page.js
+// app/(main)/page.js
 "use client";
 
-import { useState, useEffect } from "react"; // Ajout de useEffect
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { useAuth } from "./context/AuthContext"; // Chemin corrigé
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-} from "@/components/ui/card";
-import { ArrowRight } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { useAuth } from "./context/AuthContext"; // Vérifie le chemin
+import { Button } from "@/components/ui/button";
+import { ArrowRight, Loader2 } from "lucide-react";
+import Image from "next/image"; // Importé pour les futurs screenshots
 
-// Composant HubCard (dans app/(main)/page.js) - Avec flèche centrée
-function HubCard({ title, description, href, className }) {
-  const router = useRouter();
-  const [isHovered, setIsHovered] = useState(false);
-
-  const handleClick = () => {
-    router.push(href);
-  };
-
-  return (
-    <Card
-      className={cn(
-        "flex-1 w-full cursor-pointer transition-all duration-200 ease-in-out hover:shadow-lg hover:border-primary flex flex-col justify-center items-center text-center p-6 min-h-[200px] sm:min-h-0",
-        className // Applique les classes externes (comme max-w-md)
-      )}
-      onClick={handleClick}
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
-      role="link"
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") handleClick();
-      }}
-    >
-      <CardHeader>
-        <CardTitle className="text-2xl font-bold mb-2">{title}</CardTitle>
-        <CardDescription>{description}</CardDescription>
-      </CardHeader>
-      {/* Arrow container - Centré */}
-      <div className="h-6 mt-4 flex justify-center items-center">
-        {" "}
-        {/* <-- Classes ajoutées */}
-        {isHovered && <ArrowRight className="animate-pulse" size={24} />}
-      </div>
-    </Card>
-  );
-}
-
-// Page principale CORRIGÉE
-export default function HomePage() {
+export default function LandingPage() {
   const { isAuthenticated, isLoading } = useAuth();
   const router = useRouter();
 
-  // --- CORRECTION ICI ---
-  // Utiliser useEffect pour la redirection
+  // Redirection si non authentifié (ou si déjà authentifié, optionnel)
   useEffect(() => {
-    // Ne rien faire si l'état d'authentification est encore en chargement
-    if (isLoading) {
-      return;
-    }
-    // Si le chargement est terminé et que l'utilisateur n'est PAS authentifié
+    if (isLoading) return; // Attendre la fin du chargement
+
     if (!isAuthenticated) {
       router.push("/login");
     }
-    // Les dépendances assurent que l'effet se ré-exécute si ces valeurs changent
   }, [isAuthenticated, isLoading, router]);
-  // --- FIN CORRECTION ---
 
-  // Pendant le chargement ou si on va rediriger, on peut afficher un loader
-  // Ou retourner null pour éviter d'afficher la page brièvement avant redirection
-  if (isLoading || !isAuthenticated) {
-    // Afficher un loader plus stylisé serait mieux
+  // Affichage pendant le chargement ou la redirection
+  if (isLoading || (!isLoading && !isAuthenticated)) {
     return (
-      <div className="flex justify-center items-center min-h-screen">
-        Chargement...
+      <div className="flex flex-col justify-center items-center min-h-screen text-muted-foreground">
+        <Loader2 className="h-8 w-8 animate-spin mb-4" />
+        <span>Chargement...</span>
       </div>
     );
   }
 
-  // Rendu normal si authentifié
+  // Affichage de la landing page si authentifié
   return (
-    <div className="flex flex-col sm:flex-row items-stretch justify-center min-h-screen p-4 sm:p-8 gap-4 sm:gap-8 bg-background">
-      <HubCard
-        title="Boutique"
-        description="Acheter et vendre des objets."
-        href="/shop"
-      />
-      <HubCard
-        title="Quêtes"
-        description="Consulter vos défis et objectifs."
-        href="/quests"
-      />
+    <div className="flex flex-col">
+      {" "}
+      {/* Conteneur principal vertical */}
+      {/* Section "Hero" */}
+      <section className="w-full py-24 md:py-32 lg:py-40 text-center">
+        <div className="container mx-auto px-4">
+          {/* Titre Principal */}
+          <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight mb-5 text-foreground">
+            Interface Benito {/* Adapte ce titre */}
+          </h1>
+          {/* Sous-titre / Description */}
+          <p className="text-lg md:text-xl text-muted-foreground max-w-3xl mx-auto mb-10">
+            Accédez à la boutique du serveur, gérez vos objets et suivez vos
+            quêtes.
+          </p>
+          {/* Boutons d'action */}
+          <div className="flex flex-col sm:flex-row justify-center items-center gap-4">
+            <Button
+              size="lg"
+              onClick={() => router.push("/shop")}
+              className="shadow-md"
+            >
+              Accéder à la Boutique
+              <ArrowRight className="ml-2 h-5 w-5" />
+            </Button>
+            <Button
+              size="lg"
+              variant="secondary"
+              onClick={() => router.push("/quests")}
+              className="shadow"
+            >
+              Voir mes Quêtes
+              <ArrowRight className="ml-2 h-5 w-5" />
+            </Button>
+          </div>
+        </div>
+      </section>
+      {/* Section Screenshots */}
+      <section className="w-full py-16 md:py-24 bg-muted/30 border-t">
+        {" "}
+        {/* Fond léger et bordure */}
+        <div className="container mx-auto px-4">
+          <h2 className="text-3xl font-bold text-center mb-12 text-foreground">
+            Aperçu
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-12 items-start">
+            <div className="border bg-card rounded-lg overflow-hidden shadow-lg p-4">
+              <h3 className="font-semibold text-center mb-2">Boutique</h3>
+
+              <Image
+                src="/images/shop.png"
+                alt="Aperçu de la boutique"
+                width={1920} // Largeur originale de l'image
+                height={1080} // Hauteur originale
+                className="w-full h-auto rounded shadow" // Style
+              />
+            </div>
+
+            {/* Screenshot 2 (Quests) - Placeholder */}
+            <div className="border bg-card rounded-lg overflow-hidden shadow-lg p-4">
+              <h3 className="font-semibold text-center mb-2">Quêtes</h3>
+
+              <Image
+                src="/images/quest.png"
+                alt="Aperçu des quêtes"
+                width={1920}
+                height={1080}
+                className="w-full h-auto rounded shadow"
+              />
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
