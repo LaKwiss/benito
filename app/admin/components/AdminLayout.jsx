@@ -4,22 +4,32 @@
 import { useState } from "react";
 import AdminSidebar from "./AdminSidebar";
 import TodoListManager from "./TodoListManager";
-import ActionsSection from "./ActionsSection"; // <--- Importe le nouveau composant
-import { Toaster } from "@/components/ui/sonner";
+// Importe le composant pour gérer les définitions de quêtes
+import QuestDefinitionManager from "./QuestDefinitionManager";
+// Retire l'import de ActionsSection car il n'est plus utilisé
+// import ActionsSection from "./ActionsSection";
+import { Toaster } from "@/components/ui/sonner"; // Garde le Toaster Sonner
 
 export default function AdminLayout({ onLogout }) {
-  // Met 'todos' ou 'actions' comme défaut
-  const [activeSection, setActiveSection] = useState("todos");
+  // Les sections possibles sont maintenant 'todos' et 'questDefinitions'
+  const [activeSection, setActiveSection] = useState("todos"); // 'todos' par défaut
 
   const renderContent = () => {
+    console.log("Layout affiche section:", activeSection); // Pour débugger si besoin
     switch (activeSection) {
       case "todos":
         return <TodoListManager />;
-      case "actions": // <--- Utilise le nouvel ID 'actions'
-        return <ActionsSection />; // <--- Affiche le composant de section
+      case "questDefinitions": // Utilise l'ID défini dans AdminSidebar
+        return <QuestDefinitionManager />; // Affiche directement le gestionnaire
+      // Retire le cas 'actions'
+      // case 'actions':
+      //   return <ActionsSection />;
       default:
+        // Message d'erreur si l'état ne correspond à rien
         return (
-          <div>Section non trouvée. Sélectionnez une option dans le menu.</div>
+          <div>
+            Section invalide ({activeSection}). Sélectionnez une option valide.
+          </div>
         );
     }
   };
@@ -29,7 +39,7 @@ export default function AdminLayout({ onLogout }) {
       <div className="flex h-screen bg-background">
         <AdminSidebar
           activeSection={activeSection}
-          setActiveSection={setActiveSection} // Passe la fonction pour changer de section
+          setActiveSection={setActiveSection} // Passe la fonction pour changer
           onLogout={onLogout}
         />
         <main className="flex-1 p-6 overflow-auto">{renderContent()}</main>

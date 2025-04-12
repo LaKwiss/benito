@@ -2,17 +2,16 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-// Importe une icône plus générique pour 'Actions'
-import { ListTodo, LayoutGrid, LogOut } from "lucide-react";
+// Change l'icône pour les définitions de quêtes (ex: FileText)
+import { ListTodo, FileText, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const ADMIN_AUTH_KEY = "isAdminLoggedIn_benito";
 
-// Change l'id et le label ici
+// Modifie l'id et le label ici
 const navItems = [
   { id: "todos", label: "Todo List", icon: ListTodo },
-  { id: "actions", label: "Actions", icon: LayoutGrid }, // <--- Modifié ici
-  // Ajoute d'autres sections ici si besoin
+  { id: "questDefinitions", label: "Définitions Quêtes", icon: FileText }, // <-- MODIFIÉ ICI
 ];
 
 export default function AdminSidebar({
@@ -21,7 +20,8 @@ export default function AdminSidebar({
   onLogout,
 }) {
   const handleLogout = () => {
-    /* ... (inchangé) ... */
+    localStorage.removeItem(ADMIN_AUTH_KEY);
+    if (onLogout) onLogout();
   };
 
   return (

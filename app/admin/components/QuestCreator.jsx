@@ -105,6 +105,8 @@ export default function QuestCreator() {
     let isValid = false;
     let rewardToAdd = { type };
 
+    console.log("Ajout de récompense:");
+
     if (
       (type === "money" || type === "xp") &&
       amount &&

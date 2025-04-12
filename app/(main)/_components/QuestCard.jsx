@@ -63,7 +63,7 @@ const renderReward = (reward, index, questId) => {
             className="image-rendering-pixelated"
             onError={(e) => {
               // Fallback générique si l'image de l'item n'est pas trouvée
-              e.currentTarget.src = "/images/items/default.png"; // Assure-toi que ce chemin existe dans public/images/items/
+              e.currentTarget.src = `https://minecraft-api.vercel.app/images/items/barrier.png`;
               e.currentTarget.onerror = null; // Empêche boucle d'erreur
             }}
           />
