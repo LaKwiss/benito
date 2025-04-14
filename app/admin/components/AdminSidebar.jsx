@@ -4,7 +4,6 @@
 import { Button } from "@/components/ui/button";
 // Change l'icône pour les définitions de quêtes (ex: FileText)
 import { ListTodo, FileText, LogOut } from "lucide-react";
-import { cn } from "@/lib/utils";
 
 const ADMIN_AUTH_KEY = "isAdminLoggedIn_benito";
 

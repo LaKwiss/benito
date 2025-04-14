@@ -1,11 +1,12 @@
 // app/admin/components/QuestDefinitionManager.jsx
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { toast } from "sonner";
+import Image from "next/image";
 
 // Imports Shadcn UI
 import { Button } from "@/components/ui/button";
@@ -55,6 +56,15 @@ import {
 } from "@/components/ui/table";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Check, ChevronsUpDown, Search } from "lucide-react";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 
 // Imports Lucide Icons
 import {
@@ -66,11 +76,13 @@ import {
   Package,
   Coins,
   Star,
-} from "lucide-react";
+  FileText,
+} from "lucide-react"; // Ajout FileText
 
 import { cn } from "@/lib/utils";
 
 // --- Schémas Zod ---
+// S'assurer que ces schémas sont correctement définis et validés
 const rewardSchema = z
   .object({
     type: z.enum(["money", "item", "xp"]),
@@ -91,53 +103,66 @@ const rewardSchema = z
         );
       return false;
     },
-    { message: "Données invalides pour le type." }
+    { message: "Données invalides pour le type de récompense." }
   );
 
 const questDefinitionSchema = z.object({
   questId: z
     .string()
-    .min(3)
-    .regex(/^[a-z0-9_]+$/),
+    .min(3, "ID requis (min 3 car.)")
+    .regex(/^[a-z0-9_]+$/, "ID invalide (a-z, 0-9, _)."),
   title: z.string().min(1, "Titre requis."),
   description: z.string().min(1, "Description requise."),
   type: z.enum(["daily", "weekly", "monthly"], {
     required_error: "Type requis.",
   }),
   target: z.coerce
-    .number({ invalid_type_error: "Nombre requis." })
+    .number({
+      required_error: "Objectif requis.",
+      invalid_type_error: "Doit être un nombre.",
+    })
     .int()
     .positive("Doit être positif."),
   isActive: z.boolean().default(true),
+  // rewards est validé séparément avant l'envoi si nécessaire
 });
 
-// API Config
+// --- API Config ---
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
+const ITEM_API_URL = process.env.NEXT_PUBLIC_ITEM_API_URL; // Pour l'autocomplétion
 const QUESTS_ENDPOINT = "/api/admin/quests";
 
 // --- Composant Principal ---
 export default function QuestDefinitionManager() {
-  // États Liste & Chargement/Erreur
+  // --- États Liste & Chargement/Erreur ---
   const [questDefs, setQuestDefs] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // États Sheet & Formulaire
+  // --- États Sheet & Formulaire ---
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [selectedQuestDef, setSelectedQuestDef] = useState(null);
-  const [rewards, setRewards] = useState([]);
+  const [rewards, setRewards] = useState([]); // Récompenses pour le formulaire dans la Sheet
   const [currentReward, setCurrentReward] = useState({
     type: "money",
     amount: "",
     itemId: "",
     quantity: 1,
   });
-  const [popoverOpen, setPopoverOpen] = useState(false);
+  const [popoverOpen, setPopoverOpen] = useState(false); // Pour l'ajout de récompense
   const [isSheetSaving, setIsSheetSaving] = useState(false);
   const [isSheetDeleting, setIsSheetDeleting] = useState(false);
 
-  // Formulaire (react-hook-form)
+  // --- États Autocomplétion Items ---
+  const [itemComboboxOpen, setItemComboboxOpen] = useState(false);
+  const [selectedItemId, setSelectedItemId] = useState(""); // itemId sélectionné dans combobox
+  const [itemSearchQuery, setItemSearchQuery] = useState("");
+  const [itemSuggestions, setItemSuggestions] = useState([]);
+  const [isSearchingItems, setIsSearchingItems] = useState(false);
+  const debounceTimeoutRef = useRef(null);
+
+  // --- Formulaire (react-hook-form) ---
   const form = useForm({
     resolver: zodResolver(questDefinitionSchema),
     defaultValues: {
@@ -152,7 +177,6 @@ export default function QuestDefinitionManager() {
 
   // --- Fonctions API ---
   const fetchQuestDefinitions = useCallback(async () => {
-    // ... (logique fetch GET inchangée) ...
     setError(null);
     if (!API_BASE_URL) {
       setError("URL API manquante.");
@@ -190,9 +214,11 @@ export default function QuestDefinitionManager() {
       isActive: true,
     });
     setRewards([]);
+    setSelectedItemId("");
+    setItemSearchQuery("");
+    setItemSuggestions([]);
     setIsSheetOpen(true);
   };
-
   const handleEditClick = (questDef) => {
     setSelectedQuestDef(questDef);
     setIsCreating(false);
@@ -205,31 +231,73 @@ export default function QuestDefinitionManager() {
       isActive: questDef.isActive ?? true,
     });
     setRewards(questDef.rewards || []);
+    setSelectedItemId("");
+    setItemSearchQuery("");
+    setItemSuggestions([]);
     setIsSheetOpen(true);
   };
 
-  // --- États nécessaires (doivent exister dans ton composant) ---
-  // const [rewards, setRewards] = useState([]);
-  // const [currentReward, setCurrentReward] = useState({ type: 'money', amount: '', itemId: '', quantity: 1 });
-  // const [popoverOpen, setPopoverOpen] = useState(false);
-  // const { toast } = // ... si tu utilises toast de sonner (import { toast } from "sonner";)
+  // --- Fonctions Recherche Item (avec debounce) ---
+  const fetchItemSuggestions = useCallback(
+    async (query) => {
+      if (!query || query.length < 2) {
+        setItemSuggestions([]);
+        return;
+      }
+
+      setIsSearchingItems(true);
+      try {
+        const response = await fetch(
+          `${ITEM_API_URL}/items?q=${encodeURIComponent(query)}&limit=10`
+        );
+        if (!response.ok) throw new Error(`Erreur ${response.status}`);
+        const data = await response.json();
+        setItemSuggestions(Array.isArray(data) ? data : []);
+      } catch (err) {
+        console.error("Fetch Items:", err);
+        setItemSuggestions([]);
+      } finally {
+        setIsSearchingItems(false);
+      }
+    },
+    [ITEM_API_URL]
+  );
+
+  const debouncedFetchItems = useCallback(
+    (query) => {
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current);
+      }
+      debounceTimeoutRef.current = setTimeout(() => {
+        fetchItemSuggestions(query);
+      }, 300); // 300ms debounce
+    },
+    [fetchItemSuggestions]
+  );
+  useEffect(() => {
+    debouncedFetchItems(itemSearchQuery);
+    return () => {
+      /* cleanup */
+    };
+  }, [itemSearchQuery, debouncedFetchItems]);
+  const handleItemSelect = (item) => {
+    setSelectedItemId(item.itemId);
+    setItemSearchQuery(item.name);
+    setItemComboboxOpen(false);
+  };
 
   // --- Fonctions Sheet : Gestion Récompenses ---
-
-  // Fonction pour AJOUTER une récompense à la liste temporaire 'rewards'
   const handleAddReward = () => {
-    console.log("handleAddReward: Tentative d'ajout."); // LOG 1: Vérifie si la fonction est appelée
-    const { type, amount, itemId, quantity } = currentReward; // Récupère l'état de la récompense en cours d'édition
+    const { type, amount, quantity } = currentReward; // Prend de l'état courant
+    const itemId = selectedItemId; // Prend l'ID sélectionné du combobox
     let isValid = false;
-    let rewardToAdd = { type }; // Commence par le type
-
-    // Validation simple basée sur le type choisi
+    let rewardToAdd = { type };
     if (
       (type === "money" || type === "xp") &&
       amount &&
       parseInt(amount, 10) > 0
     ) {
-      rewardToAdd.amount = parseInt(amount, 10); // Ajoute le montant converti en nombre
+      rewardToAdd.amount = parseInt(amount, 10);
       isValid = true;
     } else if (
       type === "item" &&
@@ -238,65 +306,34 @@ export default function QuestDefinitionManager() {
       quantity &&
       parseInt(quantity, 10) > 0
     ) {
-      rewardToAdd.itemId = itemId.trim(); // Ajoute l'ID de l'item (nettoyé)
-      rewardToAdd.quantity = parseInt(quantity, 10); // Ajoute la quantité convertie
+      rewardToAdd.itemId = itemId.trim();
+      rewardToAdd.quantity = parseInt(quantity, 10);
       isValid = true;
     }
-    // Tu peux ajouter d'autres validations ici si nécessaire
-
-    console.log(
-      "handleAddReward: Validation terminée. Valide =",
-      isValid,
-      "Données:",
-      rewardToAdd,
-      "Input actuel:",
-      currentReward
-    ); // LOG 2: Vérifie le résultat de la validation
-
     if (isValid) {
-      // Met à jour l'état 'rewards' en ajoutant la nouvelle récompense à la liste existante
-      setRewards((prev) => {
-        const newState = [...prev, rewardToAdd];
-        console.log(
-          "handleAddReward: Nouvel état rewards après ajout:",
-          newState
-        ); // LOG 3: Vérifie le nouvel état
-        return newState;
-      });
-      // Réinitialise le formulaire d'ajout de récompense pour la prochaine fois
-      setCurrentReward({ type: "money", amount: "", itemId: "", quantity: 1 });
-      // Ferme le Popover
+      setRewards((prev) => [...prev, rewardToAdd]);
+      setCurrentReward((prev) => ({
+        ...prev,
+        amount: "",
+        itemId: "",
+        quantity: 1,
+      })); // Reset fields
+      setSelectedItemId("");
+      setItemSearchQuery("");
+      setItemSuggestions([]); // Reset combobox
       setPopoverOpen(false);
     } else {
-      // Si la validation échoue, affiche une notification d'erreur
       toast.error("Récompense invalide", {
-        description:
-          "Veuillez remplir correctement les champs pour le type sélectionné.",
+        description: "Veuillez remplir correctement les champs.",
       });
     }
   };
-
-  // Fonction pour SUPPRIMER une récompense de la liste temporaire 'rewards'
-  const removeReward = (indexToRemove) => {
-    console.log(
-      `removeReward: Tentative de suppression à l'index ${indexToRemove}`
-    ); // LOG 4: Vérifie l'index
-    // Met à jour l'état 'rewards' en filtrant l'élément à l'index donné
-    setRewards((prev) => {
-      const newState = prev.filter(
-        (_, currentIndex) => currentIndex !== indexToRemove
-      );
-      console.log(
-        "removeReward: Nouvel état rewards après suppression:",
-        newState
-      ); // LOG 5: Vérifie le nouvel état
-      return newState;
-    });
+  const removeReward = (index) => {
+    setRewards((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // --- Fonctions Sheet : Actions (Créer/Modifier/Supprimer via onSubmit et handleDeleteClick) ---
+  // --- Fonctions Sheet : Actions (Submit du formulaire react-hook-form) ---
   const onSubmit = async (values) => {
-    // ... (logique POST / PUT inchangée, utilise toast.promise) ...
     setIsSheetSaving(true);
     setError(null);
     const questData = { ...values, rewards: rewards };
@@ -306,7 +343,9 @@ export default function QuestDefinitionManager() {
     const method = isCreating ? "POST" : "PUT";
     if (!isCreating) {
       delete questData.questId;
-    }
+    } // Ne pas envoyer questId en PUT
+
+    console.log(`Submitting ${method} to ${url}`, questData);
     toast.promise(
       fetch(url, {
         method: method,
@@ -331,15 +370,16 @@ export default function QuestDefinitionManager() {
           return isCreating ? "Définition créée !" : "Définition mise à jour !";
         },
         error: (err) => {
-          return err.message;
+          console.error("Submit Error:", err);
+          return err.message || "Une erreur est survenue.";
         },
         finally: () => setIsSheetSaving(false),
       }
     );
   };
 
+  // Fonction pour le bouton Supprimer (appelée séparément)
   const handleDeleteClick = async () => {
-    // ... (logique DELETE inchangée, utilise toast.promise et confirm) ...
     if (
       !selectedQuestDef ||
       !confirm(
@@ -371,7 +411,8 @@ export default function QuestDefinitionManager() {
           return "Définition supprimée !";
         },
         error: (err) => {
-          return err.message;
+          console.error("Delete Error:", err);
+          return err.message || "Impossible de supprimer.";
         },
         finally: () => setIsSheetDeleting(false),
       }
@@ -380,16 +421,15 @@ export default function QuestDefinitionManager() {
 
   // --- Rendu ---
   return (
-    // La Sheet englobe le tableau (pour les triggers) et son propre contenu
     <Sheet open={isSheetOpen} onOpenChange={setIsSheetOpen}>
       <div className="space-y-6">
         {" "}
-        {/* Conteneur pour Titre + Bouton Créer + Erreurs + Tableau */}
+        {/* Conteneur principal */}
         <div className="flex justify-between items-center">
           <h2 className="text-2xl font-semibold">
             Gestion des Définitions de Quêtes
           </h2>
-          {/* Bouton Créer - Correction : Retire asChild */}
+          {/* Bouton Créer AVEC asChild */}
           <SheetTrigger asChild>
             <Button onClick={handleCreateClick}>
               <PlusCircle className="mr-2 h-4 w-4" /> Créer une Définition
@@ -413,6 +453,7 @@ export default function QuestDefinitionManager() {
         ) : (
           <div className="border rounded-md">
             <Table>
+              <TableCaption>Liste des modèles de quêtes.</TableCaption>
               <TableHeader>
                 <TableRow>
                   <TableHead>ID</TableHead>
@@ -448,7 +489,7 @@ export default function QuestDefinitionManager() {
                       )}
                     </TableCell>
                     <TableCell className="text-right">
-                      {/* Bouton Modifier - Correction : Retire asChild */}
+                      {/* Bouton Modifier AVEC asChild */}
                       <SheetTrigger asChild>
                         <Button
                           variant="ghost"
@@ -470,7 +511,7 @@ export default function QuestDefinitionManager() {
       {/* --- Contenu de la Sheet pour Création/Édition --- */}
       <SheetContent className="p-6 flex flex-col w-full sm:max-w-2xl">
         {" "}
-        {/* Augmenté largeur (max-w-2xl) */}
+        {/* Largeur augmentée */}
         <SheetHeader className="pr-10">
           <SheetTitle>
             {isCreating ? "Créer une Définition" : "Modifier la Définition"}
@@ -482,18 +523,17 @@ export default function QuestDefinitionManager() {
           </SheetDescription>
         </SheetHeader>
         {/* Formulaire dans la Sheet */}
-        {/* Utilise flex-grow pour pousser le footer en bas */}
         <div className="flex-grow py-4 overflow-y-auto pr-4 -mr-2 space-y-4">
           {" "}
-          {/* Ajout -mr-2 pour compenser pr-4 */}
+          {/* Scroll + Padding */}
           <Form {...form}>
-            {/* Id unique pour le formulaire pour le lier au bouton submit du footer */}
+            {/* ID unique pour le formulaire pour le lier au bouton submit du footer */}
             <form
               id="quest-def-form"
               onSubmit={form.handleSubmit(onSubmit)}
               className="space-y-6"
             >
-              {/* Champs (questId, title, desc, type, target, isActive) */}
+              {/* questId (lecture seule si édition) */}
               <FormField
                 control={form.control}
                 name="questId"
@@ -508,6 +548,7 @@ export default function QuestDefinitionManager() {
                   </FormItem>
                 )}
               />
+              {/* Autres champs */}
               <FormField
                 control={form.control}
                 name="title"
@@ -547,9 +588,9 @@ export default function QuestDefinitionManager() {
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value="daily">J</SelectItem>
-                        <SelectItem value="weekly">H</SelectItem>
-                        <SelectItem value="monthly">M</SelectItem>
+                        <SelectItem value="daily">Journalière</SelectItem>
+                        <SelectItem value="weekly">Hebdomadaire</SelectItem>
+                        <SelectItem value="monthly">Mensuelle</SelectItem>
                       </SelectContent>
                     </Select>
                     <FormMessage />
@@ -585,14 +626,9 @@ export default function QuestDefinitionManager() {
                 )}
               />
 
-              {/* Section Récompenses */}
+              {/* Section Récompenses (avec Combobox Item) */}
               <div className="space-y-3 rounded-lg border p-3 bg-background">
-                {" "}
-                {/* Léger fond différent */}
                 <h4 className="text-base font-medium">Récompenses</h4>
-                {/* ... (Logique d'affichage et d'ajout de récompenses identique à QuestCreator) ... */}
-                {/* (Copier/Coller la section depuis le code de QuestCreator ici) */}
-                {/* ... ou idéalement, utiliser un composant réutilisable QuestRewardsInput ... */}
                 {rewards.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
                     Aucune récompense.
@@ -602,7 +638,7 @@ export default function QuestDefinitionManager() {
                     {" "}
                     {rewards.map((r, idx) => (
                       <li
-                        key={`reward-${idx}`}
+                        key={`reward-${idx}-${r.type}`}
                         className="flex items-center justify-between text-xs bg-muted p-1.5 rounded"
                       >
                         {" "}
@@ -620,12 +656,40 @@ export default function QuestDefinitionManager() {
                               {r.amount}XP
                             </>
                           )}{" "}
-                          {r.type === "item" && (
-                            <>
-                              <Package className="h-3 w-3" />
-                              {r.quantity}x {r.itemId}
-                            </>
-                          )}{" "}
+                          {r.type === "item" &&
+                            (() => {
+                              // Construit l'URL de l'image
+                              const itemName =
+                                r.itemId?.replace("minecraft:", "") ??
+                                "inconnu";
+                              // Assure-toi que ITEM_API_URL est bien défini et accessible ici
+                              const itemImageUrl = ITEM_API_URL
+                                ? `${ITEM_API_URL}/assets/items/${itemName}.png`
+                                : "/images/items/default.png"; // Fallback si URL non définie
+
+                              return (
+                                <>
+                                  {/* Affiche l'image de l'item */}
+                                  <Image
+                                    src={itemImageUrl}
+                                    alt={itemName}
+                                    width={16}
+                                    height={16}
+                                    className="image-rendering-pixelated"
+                                    unoptimized
+                                    // Fallback si l'image ne charge pas
+                                    onError={(e) => {
+                                      e.currentTarget.src =
+                                        "/images/items/default.png";
+                                      e.currentTarget.onerror = null;
+                                    }}
+                                  />
+                                  {/* Affiche quantité et nom */}
+                                  {r.quantity}x {r.itemId}
+                                </>
+                              );
+                            })()}{" "}
+                          {/* Appel immédiat de la fonction pour retourner le JSX */}
                         </span>{" "}
                         <Button
                           type="button"
@@ -640,6 +704,7 @@ export default function QuestDefinitionManager() {
                     ))}{" "}
                   </ul>
                 )}
+                {/* Popover pour ajouter */}
                 <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
                   <PopoverTrigger asChild>
                     <Button type="button" variant="outline" size="sm">
@@ -647,12 +712,13 @@ export default function QuestDefinitionManager() {
                       Ajouter
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-72">
+                  <PopoverContent className="w-80">
+                    {/* ... Contenu Popover avec Select Type, Inputs conditionnels ET Combobox pour Item ... */}
+                    {/* (Copier la structure interne du Popover depuis ma réponse précédente sur le Combobox) */}
                     <div className="grid gap-3">
-                      {" "}
                       <div className="space-y-1">
                         <h5 className="font-medium text-sm">Nouvelle</h5>
-                      </div>{" "}
+                      </div>
                       <div className="grid gap-1.5">
                         <Label>Type</Label>
                         <Select
@@ -696,38 +762,113 @@ export default function QuestDefinitionManager() {
                         )}
                         {currentReward.type === "item" && (
                           <>
-                            <Label>Item ID</Label>
-                            <Input
-                              type="text"
-                              placeholder="minecraft:..."
-                              value={currentReward.itemId}
-                              onChange={(e) =>
-                                setCurrentReward((p) => ({
-                                  ...p,
-                                  itemId: e.target.value,
-                                }))
-                              }
-                              className="h-8"
-                            />
-                            <p className="text-xs text-muted-foreground">
-                              // TODO: Autocomplete
-                            </p>
-                            <Label>Quantité</Label>
-                            <Input
-                              type="number"
-                              min="1"
-                              value={currentReward.quantity}
-                              onChange={(e) =>
-                                setCurrentReward((p) => ({
-                                  ...p,
-                                  quantity: e.target.value,
-                                }))
-                              }
-                              className="h-8"
-                            />
+                            <div className="grid gap-1.5">
+                              {" "}
+                              <Label htmlFor="reward-itemid">Item ID</Label>
+                              <Popover
+                                open={itemComboboxOpen}
+                                onOpenChange={setItemComboboxOpen}
+                                modal={false}
+                              >
+                                <PopoverTrigger asChild>
+                                  <Button
+                                    id="reward-itemid"
+                                    variant="outline"
+                                    role="combobox"
+                                    aria-expanded={itemComboboxOpen}
+                                    className="w-full justify-between h-8 font-normal text-xs"
+                                  >
+                                    {" "}
+                                    {selectedItemId || "Chercher item..."}{" "}
+                                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />{" "}
+                                  </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-[300px] p-0">
+                                  <Command shouldFilter={false}>
+                                    <CommandInput
+                                      placeholder="Taper nom/ID..."
+                                      value={itemSearchQuery}
+                                      onValueChange={setItemSearchQuery}
+                                    />
+                                    <CommandList>
+                                      {isSearchingItems && (
+                                        <div className="p-1 text-xs text-center flex items-center justify-center">
+                                          <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+                                          Recherche...
+                                        </div>
+                                      )}
+                                      <CommandEmpty>
+                                        {!isSearchingItems &&
+                                        itemSearchQuery.length > 1
+                                          ? "Aucun item."
+                                          : "Tapez min 2 car."}
+                                      </CommandEmpty>{" "}
+                                      <CommandGroup>
+                                        {" "}
+                                        {itemSuggestions.map((item) => (
+                                          <CommandItem
+                                            key={item.itemId}
+                                            value={item.itemId}
+                                            onSelect={(val) => {
+                                              handleItemSelect(item);
+                                            }}
+                                            className="flex items-center gap-2 text-xs"
+                                          >
+                                            {" "}
+                                            <Image
+                                              src={`${ITEM_API_URL}${item.imageUrl}`}
+                                              alt={item.name}
+                                              width={16}
+                                              height={16}
+                                              className="image-rendering-pixelated"
+                                              unoptimized
+                                            />{" "}
+                                            <span>{item.name}</span>{" "}
+                                            <span className="text-muted-foreground ml-auto">
+                                              {item.itemId.replace(
+                                                "minecraft:",
+                                                ""
+                                              )}
+                                            </span>{" "}
+                                            <Check
+                                              className={cn(
+                                                "ml-auto h-4 w-4",
+                                                selectedItemId === item.itemId
+                                                  ? "o-100"
+                                                  : "o-0"
+                                              )}
+                                            />{" "}
+                                          </CommandItem>
+                                        ))}{" "}
+                                      </CommandGroup>{" "}
+                                    </CommandList>
+                                  </Command>
+                                </PopoverContent>
+                              </Popover>
+                            </div>
+                            <div className="grid grid-cols-3 items-center gap-4 pt-2">
+                              {" "}
+                              <Label htmlFor="reward-quantity">
+                                Quantité
+                              </Label>{" "}
+                              <Input
+                                id="reward-quantity"
+                                type="number"
+                                min="1"
+                                placeholder="1"
+                                value={currentReward.quantity}
+                                onChange={(e) =>
+                                  setCurrentReward((p) => ({
+                                    ...p,
+                                    quantity: e.target.value,
+                                  }))
+                                }
+                                className="col-span-2 h-8"
+                              />{" "}
+                            </div>
                           </>
                         )}
-                      </div>{" "}
+                      </div>
                       <Button size="sm" onClick={handleAddReward}>
                         Ajouter à liste
                       </Button>
@@ -748,15 +889,10 @@ export default function QuestDefinitionManager() {
               className="mr-auto"
             >
               {" "}
-              {isSheetDeleting ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Trash2 className="h-4 w-4" />
-              )}{" "}
-              Supprimer{" "}
+              {isSheetDeleting ? <Loader2 /> : <Trash2 />} Supprimer{" "}
             </Button>
           )}
-          {/* Bouton Annuler - Correction : Retire asChild */}
+          {/* Bouton Annuler AVEC asChild */}
           <SheetClose asChild>
             <Button
               variant="outline"
@@ -765,17 +901,13 @@ export default function QuestDefinitionManager() {
               Annuler
             </Button>
           </SheetClose>
-          {/* Le bouton Enregistrer soumet le formulaire externe grâce à l'ID */}
           <Button
             type="submit"
             form="quest-def-form"
             disabled={isSheetSaving || isSheetDeleting}
           >
             {" "}
-            {isSheetSaving && (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            )}{" "}
-            Enregistrer{" "}
+            {isSheetSaving && <Loader2 />} Enregistrer{" "}
           </Button>
         </SheetFooter>
       </SheetContent>

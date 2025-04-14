@@ -17,13 +17,15 @@ import {
   SheetFooter,
   SheetClose,
 } from "@/components/ui/sheet";
-import { toast } from "sonner"; // Utilisation de Sonner
+import { toast } from "sonner";
 import { Loader2, Trash2, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
+// L'URL de base est maintenant gérée par apiClient
+// const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
 
-export default function TodoListManager() {
+// Accepte apiClient comme prop
+export default function TodoListManager({ apiClient }) {
   // --- États Généraux ---
   const [todos, setTodos] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -41,64 +43,53 @@ export default function TodoListManager() {
   const [isSheetSaving, setIsSheetSaving] = useState(false);
   const [isSheetDeleting, setIsSheetDeleting] = useState(false);
 
-  // --- Fonctions API ---
+  // --- Fonctions API utilisant apiClient ---
 
   // Récupérer les todos
   const fetchTodos = useCallback(async () => {
-    setError(null);
-    if (!API_BASE_URL) {
-      setError("URL API non configurée.");
+    // Vérifier si apiClient est passé (sécurité)
+    if (!apiClient) {
+      setError("Client API non initialisé.");
       setIsLoading(false);
       return;
     }
+    setError(null);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/admin/todos`);
-      if (!response.ok)
-        throw new Error(
-          `Erreur ${response.status} (${
-            response.statusText || "inconnue"
-          }) lors de la récupération.`
-        );
-      const data = await response.json();
+      // Utilise apiClient.get qui gère l'auth et le refresh
+      const data = await apiClient.get("/admin/todos");
       setTodos(Array.isArray(data) ? data : []);
     } catch (err) {
-      console.error("Erreur fetchTodos:", err);
+      console.error("Erreur fetchTodos via apiClient:", err);
+      // apiClient lève des erreurs déjà formatées (ex: 'Session expirée')
       setError(err.message);
+      // Pas besoin de toast ici, l'erreur est affichée dans l'Alert
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [apiClient]); // Ajouter apiClient aux dépendances
 
   useEffect(() => {
     setIsLoading(true);
     fetchTodos();
-  }, [fetchTodos]);
+  }, [fetchTodos]); // fetchTodos a maintenant apiClient comme dépendance
 
   // Ajouter un todo
   const handleAddTodo = async (event) => {
     event.preventDefault();
-    if (!newTodoText.trim()) return;
+    if (!newTodoText.trim() || !apiClient) return;
+
     setIsSubmitting(true);
     setError(null);
+    const textToAdd = newTodoText.trim(); // Sauvegarder avant de vider
+
     try {
-      const response = await fetch(`${API_BASE_URL}/api/admin/todos`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: newTodoText.trim() }),
-      });
-      if (!response.ok) {
-        let errorMsg = `Erreur ${response.status}`;
-        try {
-          const d = await response.json();
-          errorMsg = d.message || JSON.stringify(d);
-        } catch (e) {}
-        throw new Error(errorMsg);
-      }
-      setNewTodoText("");
+      // Utilise apiClient.post
+      await apiClient.post("/admin/todos", { text: textToAdd });
+      setNewTodoText(""); // Vider seulement après succès
       toast.success("Tâche ajoutée !");
-      await fetchTodos();
+      await fetchTodos(); // Recharger la liste
     } catch (err) {
-      console.error("Erreur handleAddTodo:", err);
+      console.error("Erreur handleAddTodo via apiClient:", err);
       setError(err.message);
       toast.error("Erreur ajout", { description: err.message });
     } finally {
@@ -108,26 +99,24 @@ export default function TodoListManager() {
 
   // Basculer état complété (action rapide depuis checkbox)
   const handleToggleComplete = async (todoId, currentStatus) => {
+    if (!apiClient) return;
     const originalTodos = [...todos];
+    // Optimistic UI: Mettre à jour l'UI immédiatement
     setTodos((prevTodos) =>
       prevTodos.map((t) =>
         t._id === todoId ? { ...t, isCompleted: !currentStatus } : t
       )
-    ); // Optimistic UI
+    );
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/api/admin/todos/${todoId}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ isCompleted: !currentStatus }),
-        }
-      );
-      if (!response.ok) throw new Error("Erreur serveur");
-    } catch (err) {
-      toast.error("Erreur MàJ", {
-        description: "Impossible de changer le statut.",
+      // Utilise apiClient.patch
+      await apiClient.patch(`/admin/todos/${todoId}`, {
+        isCompleted: !currentStatus,
       });
+      // Si succès, l'UI est déjà à jour. On pourrait re-fetch pour synchro absolue mais pas essentiel ici.
+    } catch (err) {
+      console.error("Erreur handleToggleComplete via apiClient:", err);
+      toast.error("Erreur MàJ Statut", { description: err.message });
+      // Rollback UI en cas d'erreur
       setTodos(originalTodos);
     }
   };
@@ -142,40 +131,31 @@ export default function TodoListManager() {
 
   // Sauvegarder depuis la Sheet
   const handleUpdateTodo = async () => {
-    if (!selectedTodo || !editText.trim()) {
-      toast.error("Le texte ne peut pas être vide.");
+    if (!selectedTodo || !editText.trim() || !apiClient) {
+      toast.error("Le texte ne peut pas être vide ou client API manquant.");
       return;
     }
     setIsSheetSaving(true);
-    setError(null);
+    setError(null); // Reset error specific to this action
     const updatedData = { text: editText.trim(), isCompleted: editCompleted };
     const todoId = selectedTodo._id;
 
+    // Utiliser toast.promise avec l'appel apiClient
     toast.promise(
-      fetch(`${API_BASE_URL}/api/admin/todos/${todoId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updatedData),
-      }).then(async (response) => {
-        if (!response.ok) {
-          let errorMsg = `Erreur ${response.status}`;
-          try {
-            const d = await response.json();
-            errorMsg = d.message || JSON.stringify(d);
-          } catch (e) {}
-          throw new Error(errorMsg);
-        }
-        return response.json();
-      }),
+      apiClient.patch(`/admin/todos/${todoId}`, updatedData), // Appel API direct ici
       {
         loading: "Mise à jour...",
         success: () => {
-          setIsSheetOpen(false);
-          fetchTodos();
+          setIsSheetOpen(false); // Fermer la sheet
+          fetchTodos(); // Recharger la liste
           return "Tâche mise à jour avec succès !";
         },
         error: (err) => {
-          console.error("Erreur handleUpdateTodo:", err);
+          // apiClient propage déjà une erreur formatée
+          console.error(
+            "Erreur handleUpdateTodo via apiClient (dans toast):",
+            err
+          );
           return err.message || "Impossible de mettre à jour.";
         },
         finally: () => setIsSheetSaving(false),
@@ -185,35 +165,30 @@ export default function TodoListManager() {
 
   // Supprimer depuis la Sheet
   const handleDeleteFromSheet = async () => {
-    if (!selectedTodo) return;
-    if (!confirm(`Supprimer la tâche "${selectedTodo.text}" ?`)) return;
+    if (!selectedTodo || !apiClient) return;
+    // Utilisation de window.confirm est simple mais basique pour l'UX
+    if (!window.confirm(`Supprimer la tâche "${selectedTodo.text}" ?`)) return;
 
     setIsSheetDeleting(true);
     setError(null);
     const todoId = selectedTodo._id;
 
+    // Utiliser toast.promise avec l'appel apiClient
     toast.promise(
-      fetch(`${API_BASE_URL}/api/admin/todos/${todoId}`, {
-        method: "DELETE",
-      }).then(async (response) => {
-        if (!response.ok) {
-          let errorMsg = `Erreur ${response.status}`;
-          try {
-            const d = await response.json();
-            errorMsg = d.message || JSON.stringify(d);
-          } catch (e) {}
-          throw new Error(errorMsg);
-        }
-      }),
+      apiClient.delete(`/admin/todos/${todoId}`), // Appel API direct ici
       {
         loading: "Suppression...",
         success: () => {
-          setIsSheetOpen(false);
-          fetchTodos();
+          setIsSheetOpen(false); // Fermer la sheet
+          fetchTodos(); // Recharger la liste
           return "Tâche supprimée avec succès !";
         },
         error: (err) => {
-          console.error("Erreur handleDeleteFromSheet:", err);
+          // apiClient propage déjà une erreur formatée
+          console.error(
+            "Erreur handleDeleteFromSheet via apiClient (dans toast):",
+            err
+          );
           return err.message || "Impossible de supprimer.";
         },
         finally: () => setIsSheetDeleting(false),
@@ -221,21 +196,36 @@ export default function TodoListManager() {
     );
   };
 
-  // --- Rendu ---
+  // --- Rendu (Identique à avant, sauf la vérification apiClient au début) ---
   return (
     <Sheet open={isSheetOpen} onOpenChange={setIsSheetOpen}>
       <div className="space-y-6">
         <h2 className="text-2xl font-semibold">Todo List Administrateur</h2>
+
+        {/* Afficher une erreur si apiClient n'est pas fourni */}
+        {!apiClient && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Erreur de Configuration</AlertTitle>
+            <AlertDescription>
+              Le client API n'a pas été correctement initialisé.
+            </AlertDescription>
+          </Alert>
+        )}
+
         <form onSubmit={handleAddTodo} className="flex gap-2">
           <Input
             type="text"
             placeholder="Nouvelle tâche..."
             value={newTodoText}
             onChange={(e) => setNewTodoText(e.target.value)}
-            disabled={isSubmitting}
+            disabled={isSubmitting || !apiClient} // Désactiver si pas de client API
             className="flex-grow"
           />
-          <Button type="submit" disabled={isSubmitting || !newTodoText.trim()}>
+          <Button
+            type="submit"
+            disabled={isSubmitting || !newTodoText.trim() || !apiClient}
+          >
             {isSubmitting ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
@@ -243,13 +233,18 @@ export default function TodoListManager() {
             )}
           </Button>
         </form>
-        {error && (
-          <Alert variant="destructive">
-            <AlertCircle className="h-4 w-4" />
-            <AlertTitle>Erreur API</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
+
+        {/* Affichage de l'erreur générale */}
+        {error &&
+          !isLoading && ( // Afficher seulement si pas en chargement
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Erreur API</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+
+        {/* Logique d'affichage */}
         {isLoading ? (
           <div className="flex justify-center items-center py-10">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -269,6 +264,8 @@ export default function TodoListManager() {
                 <Checkbox
                   id={`todo-check-${todo._id}`}
                   checked={todo.isCompleted}
+                  // Désactiver si pas de client API
+                  disabled={!apiClient}
                   onCheckedChange={() =>
                     handleToggleComplete(todo._id, todo.isCompleted)
                   }
@@ -278,11 +275,11 @@ export default function TodoListManager() {
                 <SheetTrigger asChild>
                   <button
                     onClick={() => handleEditClick(todo)}
+                    disabled={!apiClient} // Désactiver si pas de client API
                     className={cn(
                       "flex-grow text-left cursor-pointer hover:text-primary transition-colors",
-                      todo.isCompleted
-                        ? "line-through text-muted-foreground"
-                        : ""
+                      todo.isCompleted && "line-through text-muted-foreground",
+                      !apiClient && "cursor-not-allowed opacity-50" // Style si désactivé
                     )}
                     aria-label={`Modifier la tâche ${todo.text}`}
                   >
@@ -294,6 +291,8 @@ export default function TodoListManager() {
           </ul>
         )}
       </div>
+
+      {/* Sheet Content (Modal/Drawer pour édition) */}
       <SheetContent>
         <SheetHeader>
           <SheetTitle>Modifier la Tâche</SheetTitle>
